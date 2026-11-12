@@ -64,3 +64,61 @@ def defang(u: str) -> str:
 def host_of(u: str) -> str:
     m = re.match(r"(?i)^(?:[a-z]+://)?([^/:?#]+)", u)
     return m.group(1).lower() if m else ""
+
+
+# ---------------------------------------------------------------- lookalike domains
+# brand keyword -> domains that really belong to it. Add the organization's own domains with
+# SAFERENDER_ORG_DOMAINS="example.org,example-mail.org" (the keyword is each domain's first label).
+BRANDS = {
+    "microsoft": {"microsoft.com", "microsoftonline.com", "microsoft365.com", "office.com", "office365.com",
+                  "live.com", "outlook.com", "sharepoint.com", "onmicrosoft.com", "windows.net", "azure.com"},
+    "docusign": {"docusign.com", "docusign.net"},
+    "paypal": {"paypal.com"},
+    "adobe": {"adobe.com"},
+    "dropbox": {"dropbox.com"},
+    "contoso": {"contoso.com"},  # demo organization used by the test samples
+}
+_HOMO = {"0": "o", "3": "e", "4": "a", "5": "s", "7": "t", "8": "b", "@": "a", "$": "s", "|": "l"}
+_ONE_AS = ("l", "i")  # "1" stands in for either
+
+
+def brands() -> dict[str, set[str]]:
+    import os
+
+    b = {k: set(v) for k, v in BRANDS.items()}
+    for d in filter(None, (x.strip().lower() for x in os.environ.get("SAFERENDER_ORG_DOMAINS", "").split(","))):
+        b.setdefault(d.split(".")[0], set()).add(d)
+    return b
+
+
+def _skeletons(s: str) -> set[str]:
+    base = s.lower().translate(str.maketrans(_HOMO)).replace("rn", "m").replace("vv", "w")
+    return {re.sub(r"[^a-z]", "", base.replace("1", c)) for c in _ONE_AS}
+
+
+def owned_by(host: str, domains: set[str]) -> bool:
+    host = host.lower().rstrip(".")
+    return any(host == d or host.endswith("." + d) for d in domains)
+
+
+def lookalike(host: str) -> str | None:
+    """The brand a host imitates (micros0ft-support.example, contoso.com.evil.example), or None.
+    Hosts that really belong to the brand are never flagged."""
+    host = (host or "").lower().rstrip(".")
+    if not host or re.fullmatch(r"[\d.:]+", host):
+        return None
+    all_brands = brands()
+    # Really hosted on a known brand's domain (e.g. contoso.sharepoint.com): not an imitation.
+    if owned_by(host, set().union(*all_brands.values())):
+        return None
+    sk = _skeletons(host)
+    for brand, doms in all_brands.items():
+        if any(brand in s for s in sk) and not owned_by(host, doms):
+            return brand
+    return None
+
+
+def brand_named(text: str) -> str | None:
+    """A brand keyword spelled out in display text (e.g. a sender name 'Microsoft 365 Security')."""
+    words = set(re.findall(r"[a-z]+", (text or "").lower()))
+    return next((b for b in brands() if b in words), None)

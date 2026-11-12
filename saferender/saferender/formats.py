@@ -26,12 +26,14 @@ LIMITS = {
     "av_timeout_s": 300,
     "max_text_bytes": 2 * 1024 * 1024,
     "max_macro_chars": 200_000,
+    "max_eml_bytes": 60 * 1024 * 1024,
 }
 
 OFFICE_EXT = {".doc", ".docx", ".docm", ".dot", ".dotm", ".xls", ".xlsx", ".xlsm", ".xlsb", ".ppt", ".pptx",
               ".pptm", ".rtf", ".odt", ".ods", ".odp"}
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".bmp", ".tif", ".tiff", ".webp"}
-TEXT_EXT = {".txt", ".csv", ".htm", ".html", ".xhtml", ".svg", ".xml", ".json", ".eml"}
+TEXT_EXT = {".txt", ".csv", ".htm", ".html", ".xhtml", ".svg", ".xml", ".json"}
+EMAIL_EXT = {".eml"}
 EXEC_EXT = {".exe", ".dll", ".scr", ".com", ".pif", ".bat", ".cmd", ".ps1", ".vbs", ".vbe", ".js", ".jse", ".wsf",
             ".wsh", ".hta", ".lnk", ".msi", ".jar", ".iso", ".img", ".vhd", ".vhdx", ".one", ".reg", ".cpl", ".appx"}
 HTML_EXT = {".htm", ".html", ".xhtml", ".svg", ".shtml"}
@@ -183,34 +185,49 @@ def office_to_pdf(path: Path, workdir: Path) -> tuple[Path | None, str | None]:
 class _HtmlText(html.parser.HTMLParser):
     def __init__(self):
         super().__init__(convert_charrefs=True)
-        self.text, self.hrefs, self._skip = [], [], 0
+        self.text, self.hrefs, self.anchors, self._skip, self._a = [], [], [], 0, None
 
     def handle_starttag(self, tag, attrs):
         if tag in ("script", "style"):
             self._skip += 1
+        if tag in ("p", "div", "br", "tr", "li", "h1", "h2", "h3", "table"):
+            self.text.append("\n")
         for k, v in attrs:
             if k in ("href", "src", "action", "formaction", "data") and v:
                 self.hrefs.append(v.strip())
+                if tag == "a" and k == "href":
+                    self._a = [v.strip(), []]
 
     def handle_endtag(self, tag):
         if tag in ("script", "style") and self._skip:
             self._skip -= 1
+        if tag == "a" and self._a:
+            self.anchors.append((self._a[0], " ".join("".join(self._a[1]).split())[:300]))
+            self._a = None
 
     def handle_data(self, data):
         if not self._skip:
             self.text.append(data)
+            if self._a:
+                self._a[1].append(data)
 
 
-def read_text(path: Path, is_html: bool) -> tuple[str, list[str], dict]:
-    raw = path.read_bytes()[: LIMITS["max_text_bytes"]]
-    txt = raw.decode("utf-8", "replace")
-    if not is_html:
-        return txt, [], {}
+def html_text(txt: str) -> tuple[str, list[str], list[tuple[str, str]]]:
+    """Visible text, every href/src/action, and (href, visible anchor text) pairs for <a> links."""
     p = _HtmlText()
     try:
         p.feed(txt)
     except Exception:
         pass
+    return re.sub(r"[ \t]*\n\s*", "\n", "".join(p.text)).strip(), p.hrefs, p.anchors
+
+
+def read_text(path: Path, is_html: bool) -> tuple[str, list[str], list[tuple[str, str]], dict]:
+    raw = path.read_bytes()[: LIMITS["max_text_bytes"]]
+    txt = raw.decode("utf-8", "replace")
+    if not is_html:
+        return txt, [], [], {}
+    text, hrefs, anchors = html_text(txt)
     signals = {
         "script tags": len(re.findall(r"(?i)<script\b", txt)),
         "forms": len(re.findall(r"(?i)<form\b", txt)),
@@ -218,7 +235,85 @@ def read_text(path: Path, is_html: bool) -> tuple[str, list[str], dict]:
         "base64 blobs (HTML smuggling)": len(re.findall(r"[A-Za-z0-9+/]{2000,}={0,2}", txt)),
         "atob/Blob/msSaveOrOpenBlob": len(re.findall(r"\b(atob|new Blob|msSaveOrOpenBlob|createObjectURL)\b", txt)),
     }
-    return re.sub(r"\s+\n", "\n", "".join(p.text)).strip(), p.hrefs, {k: v for k, v in signals.items() if v}
+    return text, hrefs, anchors, {k: v for k, v in signals.items() if v}
+
+
+# ---------------------------------------------------------------- email (.eml)
+EMAIL_HEADERS = ("From", "Reply-To", "Return-Path", "To", "Cc", "Subject", "Date", "Message-ID",
+                 "Authentication-Results")
+
+
+def looks_like_email(path: Path) -> bool:
+    head = path.read_bytes()[:4096]
+    return bool(re.match(rb"(?i)(received|return-path|from|delivered-to|x-[\w-]+|message-id|mime-version|date|to|subject):",
+                         head)) and b"\n\n" in head.replace(b"\r\n", b"\n") and re.search(rb"(?im)^from:", head) is not None
+
+
+def _leaves(part):
+    """Walk MIME parts, but stop at attached emails (message/rfc822): those become child files."""
+    if part.get_content_type() == "message/rfc822" or not part.is_multipart():
+        yield part
+        return
+    for p in part.get_payload():
+        yield from _leaves(p)
+
+
+def parse_eml(path: Path, dest: Path, budget: dict) -> dict:
+    """Headers, visible body text, links with their anchor text, and every attachment/inline part saved as a file.
+    Static parse with the stdlib: nothing is fetched, nothing is executed."""
+    import mimetypes
+    from email import policy
+    from email.parser import BytesParser
+
+    msg = BytesParser(policy=policy.default).parsebytes(path.read_bytes()[: LIMITS["max_eml_bytes"]])
+    out = {"headers": {}, "text": [], "plain": [], "hrefs": [], "anchors": [], "files": [], "notes": []}
+    for k in EMAIL_HEADERS:
+        try:
+            v = msg.get(k)
+        except Exception:  # malformed header: keep going, note it
+            out["notes"].append(f"unreadable {k} header")
+            v = None
+        if v:
+            out["headers"][k] = " ".join(str(v).split())[:1000]
+    dest.mkdir(parents=True, exist_ok=True)
+    for part in _leaves(msg):
+        ctype = part.get_content_type()
+        name = part.get_filename()
+        is_body = ctype in ("text/plain", "text/html") and not name and part.get_content_disposition() != "attachment"
+        if is_body:
+            try:
+                body = part.get_content()
+            except Exception:
+                body = (part.get_payload(decode=True) or b"").decode("utf-8", "replace")
+            body = body[: LIMITS["max_text_bytes"]]
+            if ctype == "text/html":
+                text, hrefs, anchors = html_text(body)
+                out["text"].append(text)
+                out["hrefs"] += hrefs
+                out["anchors"] += anchors
+            else:
+                out["plain"].append(body)
+            continue
+        if ctype == "message/rfc822":
+            inner = part.get_payload()
+            data = (inner[0] if isinstance(inner, list) else inner).as_bytes()
+            name = name or "attached-message.eml"
+        else:
+            data = part.get_payload(decode=True) or b""
+            name = name or ("inline-part" + (mimetypes.guess_extension(ctype) or ".bin"))
+        if budget["files"] >= LIMITS["max_files"] or budget["bytes"] + len(data) > LIMITS["max_total_bytes"]:
+            out["notes"].append(f"skipped {safe_name(name)}: file/size limit")
+            continue
+        p = dest / f"{len(out['files']) + 1:02d}-{safe_name(name)}"
+        p.write_bytes(data)
+        budget["files"] += 1
+        budget["bytes"] += len(data)
+        out["files"].append((p, name))
+    join = lambda parts: "\n\n".join(t.strip() for t in parts if t.strip())  # noqa: E731
+    # Show the HTML body when there is one (what Outlook displays); the plain copy is still scanned for links.
+    out["scan"] = join(out["text"] + out["plain"])
+    out["text"] = join(out["text"]) or join(out["plain"])
+    return out
 
 
 # ---------------------------------------------------------------- antivirus

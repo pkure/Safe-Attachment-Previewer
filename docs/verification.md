@@ -7,8 +7,8 @@ v1 (Azure VM) live evidence: [v1/verification.md](v1/verification.md).
 
 ```
 $ scripts/preview-local.sh test
-..................                                                       [100%]
-18 passed in 50.51s
+...........................                                              [100%]
+27 passed in 72.72s
 ```
 
 The tests run inside the same hardened container (`--network none --read-only --cap-drop ALL ...`) as the real path.
@@ -24,6 +24,12 @@ The tests run inside the same hardened container (`--network none --read-only --
 | `statement-js.pdf` | PDF JavaScript flagged |
 | `invoice-eicar.zip` | Unpacked; ClamAV detects EICAR; verdict MALICIOUS |
 | `statement-clean.pdf` | NO DETECTIONS |
+| `fwd-account-alert.eml` | Spoofed "Microsoft 365 Security" sender name, lookalike domain, SPF/DMARC fail, Reply-To elsewhere, deceptive link text; inline QR and attached PDF unpacked, QR decoded, callback number found in the PDF |
+| `vendor-bank-change.docx` (BEC) | Letter rendered and readable, callback number listed |
+| `shared-document.html` | Password field flagged, form posting to a DocuSign lookalike flagged |
+| `voicemail.png` | OCR finds the link and the phone number that exist only as pixels |
+| `timesheet.xlsx` | Clean file: rendered, NO DETECTIONS |
+| lookalike unit tests | `micros0ft`, `m1crosoft`, `rnicrosoft`, `contoso.com.<other>` flagged; `login.microsoftonline.com`, `contoso.sharepoint.com` not |
 | every case | `isolation.internetReached == false` and `isolation.dnsResolved == false` |
 
 ## V2: whole-case run and timing

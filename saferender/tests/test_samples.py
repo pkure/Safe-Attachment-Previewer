@@ -113,3 +113,48 @@ def test_script_shown_as_text(tmp_path):
     assert "WScript.Echo" in f["text"]
     assert any(link["host"] == "dl-test.example" for link in f["links"])
     assert any("executable or script" in t for t in flags(rep))
+
+
+def test_forwarded_email(tmp_path):
+    rep = run(tmp_path, "fwd-account-alert.eml")
+    mail = rep["files"][0]
+    assert mail["email"]["Subject"].startswith("Action required")
+    t = flags(rep)
+    assert any("sender name says" in x for x in t), "spoofed display name"
+    assert any("sender authentication failed" in x and "DMARC" in x for x in t)
+    assert any("replies go to" in x for x in t)
+    assert any("imitates microsoft" in x for x in t), "lookalike sender/link domain"
+    assert any("link text shows 'account.microsoft.com'" in x for x in t), "deceptive anchor in HTML body"
+    kids = {f["name"]: f for f in rep["files"] if f["parent"] == mail["id"]}
+    assert {"qr-mfa.png", "Security-Report.pdf"} <= set(kids), kids.keys()
+    assert kids["qr-mfa.png"]["qr"][0]["text"] == "https://mfa-reverify.example/start"
+    assert any(p["number"] == "+18005550177" for p in kids["Security-Report.pdf"]["phones"])
+    assert kids["Security-Report.pdf"]["pages"]
+    assert rep["verdict"] == "SUSPICIOUS"
+
+
+def test_bec_letter_shows_content_and_number(tmp_path):
+    rep = run(tmp_path, "vendor-bank-change.docx")
+    f = rep["files"][0]
+    assert f["pages"] and "banking details have changed" in f["pages"][0]["text"]
+    assert any(p["number"] == "+18005550187" for p in f["phones"])
+
+
+def test_html_login_page(tmp_path):
+    rep = run(tmp_path, "shared-document.html")
+    t = flags(rep)
+    assert any("password fields" in x for x in t)
+    assert any("imitates docusign" in x for x in t)
+
+
+def test_voicemail_screenshot_ocr(tmp_path):
+    rep = run(tmp_path, "voicemail.png")
+    f = rep["files"][0]
+    assert any("vm-listen.example" in link["url"] for link in f["links"])
+    assert any(p["number"] == "+18005550199" for p in f["phones"])
+
+
+def test_clean_spreadsheet(tmp_path):
+    rep = run(tmp_path, "timesheet.xlsx")
+    assert rep["files"][0]["pages"]
+    assert rep["verdict"] == "NO DETECTIONS", flags(rep)

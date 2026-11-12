@@ -34,6 +34,12 @@ scripts/preview-local.sh render dist/samples-v2/long-report.pdf
 
 Your browser opens the viewer. You can give it several files at once and they become one case.
 
+A suspicious **email** works too: in Outlook, save it as a file (`.eml`) and render that. You'll see the sender
+checks, the body, and every attachment inside it. (`.msg` isn't supported yet.)
+
+**Preview samples** (fake, made by `samples`): a forwarded phishing email, a vendor bank-change letter, a fake sign-in
+page, a voicemail screenshot, a clean timesheet, plus the older test files. All live in `dist/samples-v2/` and `dist/samples/`.
+
 **In the viewer:**
 - The **← / →** arrow keys turn pages. **n** / **p** jump to the next or previous finding. **f** hides pages with
   nothing on them, so long documents get short.
@@ -45,13 +51,14 @@ Your browser opens the viewer. You can give it several files at once and they be
 
 ## Check that it still works
 
-`scripts/preview-local.sh test` should end with **18 passed**.
+`scripts/preview-local.sh test` should end with **27 passed**.
 
 ## If something goes wrong
 
 - **"Cannot connect to the Docker daemon"**: Docker Desktop isn't running. Open it and try again.
 - **Viewer page won't load**: run `scripts/preview-local.sh serve`, then open http://127.0.0.1:8765/
 - **Need fresh antivirus signatures**: run `build` again. Signatures are baked into the box when it's built.
+  On GitHub, a nightly job does this automatically (Actions tab → nightly-image).
 
 ## The old version (v1)
 

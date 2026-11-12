@@ -26,7 +26,7 @@ serve() {
 case "${1:-}" in
   build) docker build -t "$IMG" saferender ;;
   samples)
-    mkdir -p dist/samples-v2
+    mkdir -p dist/samples-v2 && chmod a+rwx dist/samples-v2  # container runs as uid 10001 (matters on Linux)
     docker run "${HARDEN[@]}" -v "$PWD/dist/samples-v2:/out" --entrypoint python "$IMG" -m saferender.make_samples /out
     ;;
   test)
@@ -40,7 +40,7 @@ case "${1:-}" in
     id="$(date -u +%Y%m%d-%H%M%S)-$(openssl rand -hex 2)"
     in="$(mktemp -d)"
     cp "$@" "$in/"
-    mkdir -p "$PREVIEW/cases/$id"
+    mkdir -p "$PREVIEW/cases/$id" && chmod a+rwx "$PREVIEW/cases/$id"
     docker run "${HARDEN[@]}" -v "$in:/in:ro" -v "$PWD/$PREVIEW/cases/$id:/out" "$IMG" --case "$id"
     rm -rf "$in"
     serve

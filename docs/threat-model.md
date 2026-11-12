@@ -48,11 +48,17 @@ B4: engine → host (container isolation).
 
 - **Static view, not behavior.** The engine shows content and structure. It doesn't detonate. A file that is only
   malicious when it runs (an exploit doc with clean-looking content) can look fine. That's what the escalation path is for.
-- **Lookalike domains are listed, not flagged.** A "Click here" link to `login-micros0ft-support.example` shows up in
-  the link index with its page position, but it is only flagged when the visible text names a *different* domain. Next:
-  a lookalike/homoglyph check against an allow-list of the organization's real domains.
+- **Lookalike checks cover a short brand list.** Hosts that imitate Microsoft, DocuSign, PayPal, Adobe, Dropbox or
+  the organization's own domains (`SAFERENDER_ORG_DOMAINS`) are flagged, including digit swaps (`micros0ft`, `m1crosoft`)
+  and `rn`→`m`. Real brand-hosted pages (`contoso.sharepoint.com`) are never flagged. Other brands and full Unicode
+  confusables aren't covered yet; punycode hosts get a general warning.
+- **Outlook `.msg` files aren't parsed yet.** `.eml` is fully supported. In the cloud version, intake fetches the
+  message as MIME through Microsoft Graph, so `.msg` never has to be handled. Locally, save as `.eml` first.
+- **Sender checks trust the headers in the file.** For a forwarded email, `Authentication-Results` is what the
+  receiving server recorded. That's useful, but a crafted `.eml` could fake it. The cloud intake reads it straight from
+  Exchange.
 - **Antivirus is ClamAV with build-time signatures.** "No detections" is not "safe", and the viewer says so.
-  Production: daily image rebuild, and hash lookups in the organization's own EDR/gateway.
+  The image is rebuilt nightly (`.github/workflows/nightly-image.yml`). Production also needs hash lookups in the organization's own EDR/gateway.
 - **Password-protected archives and PDFs** are flagged but not opened. A password field in the viewer is possible, but
   it is deliberately left out of the demo.
 - **Encrypted or obfuscated macros** are shown as oletools extracts them. Heavy obfuscation needs a human or a sandbox.

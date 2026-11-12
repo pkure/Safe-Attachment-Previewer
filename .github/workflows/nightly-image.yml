@@ -1,0 +1,51 @@
+# Nightly engine rebuild: fresh ClamAV signatures + patched parsers (pdfium, LibreOffice, Pillow, tesseract).
+# This build is the ONLY step with internet. The image it publishes renders files with no network at all.
+# A new image is published only if every test passes inside the hardened, offline container.
+name: nightly-image
+
+on:
+  schedule:
+    - cron: "17 9 * * *"   # 09:17 UTC daily (~1-2 AM Pacific), before the workday
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: ["saferender/**", ".github/workflows/nightly-image.yml"]
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: nightly-image
+  cancel-in-progress: true
+
+jobs:
+  build-test-publish:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    env:
+      IMAGE: ghcr.io/${{ github.repository_owner }}/safe-attachment-previewer
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build engine image (pulls today's signatures)
+        run: docker build --pull -t saferender:dev saferender
+
+      - name: Generate benign test samples
+        run: |
+          scripts/build.sh                 # v1 samples: EICAR zip, macro xlsm, JS PDF, clean PDF
+          scripts/preview-local.sh samples # v2 samples
+
+      - name: Test inside the offline, hardened container
+        run: scripts/preview-local.sh test
+
+      - name: Publish (only reached if tests pass)
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          img="${IMAGE,,}"
+          day="$(date -u +%Y%m%d)"
+          for tag in latest "$day" "sha-${GITHUB_SHA::7}"; do
+            docker tag saferender:dev "$img:$tag"
+            docker push -q "$img:$tag"
+          done
+          docker run --rm --network none --entrypoint sh saferender:dev -c 'sigtool --info /var/lib/clamav/daily.c* | head -3' || true

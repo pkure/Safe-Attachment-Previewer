@@ -91,6 +91,20 @@ def add_link(f: dict, url: str, page: int | None, source: str, anchor: str | Non
     if shown and link["host"] and not any(link["host"] == d.lower() or link["host"].endswith("." + d.lower())
                                           for d in shown):
         flag(f, "high", f"link text shows '{shown[0]}' but opens {link['defanged']}", page)
+    host_flags(f, link["host"], page, "link")
+
+
+def host_flags(f: dict, host: str, page: int | None, what: str) -> None:
+    """Lookalike-brand and punycode checks, once per host per file."""
+    seen = f.setdefault("_hosts", set())
+    if not host or host in seen:
+        return
+    seen.add(host)
+    brand = X.lookalike(host)
+    if brand:
+        flag(f, "high", f"{what} domain {X.defang(host)} imitates {brand} but isn't theirs", page)
+    if "xn--" in host:
+        flag(f, "medium", f"{what} domain {X.defang(host)} uses punycode (look-alike characters possible)", page)
 
 
 def scan_text(f: dict, text: str, page: int | None, source: str) -> None:
@@ -294,7 +308,12 @@ def process(case: Case, path: Path, name: str, parent: str | None, depth: int, w
             f["children"].append(f"f{len(case.files) + 1}")
             process(case, k, child_name, f["id"], depth + 1, work, budget)
         return
-    if kind == "pdf":
+    if ext in F.EMAIL_EXT or (kind == "other" and ext not in F.HTML_EXT and F.looks_like_email(path)):
+        if depth >= F.LIMITS["zip_depth"] + 1:
+            f["notes"].append("nested email not unpacked (depth limit)")
+            return
+        email_file(case, f, path, depth, work, budget)
+    elif kind == "pdf":
         render_pdf(case, f, path)
     elif kind in ("ole", "rtf", "zip") or ext in F.OFFICE_EXT:
         office(case, f, path, work)
@@ -302,12 +321,10 @@ def process(case: Case, path: Path, name: str, parent: str | None, depth: int, w
         render_image(case, f, path)
     elif ext in F.TEXT_EXT or looks_like_text(path):
         is_html = ext in F.HTML_EXT or b"<html" in path.read_bytes()[:4096].lower()
-        text, hrefs, signals = F.read_text(path, is_html)
+        text, hrefs, anchors, signals = F.read_text(path, is_html)
         f["text"] = text[:200000]
+        add_html_links(f, hrefs, anchors)
         scan_text(f, text, None, "text")
-        for h in hrefs:
-            if re.match(r"(?i)^(https?|ftp)://|^www\.", h):
-                add_link(f, h, None, "html")
         if is_html:
             f["htmlSignals"] = signals
             flag(f, "medium", "HTML attachment (a common credential-phishing and HTML-smuggling format)")
@@ -315,6 +332,49 @@ def process(case: Case, path: Path, name: str, parent: str | None, depth: int, w
                 flag(f, "high", "HTML contains " + ", ".join(signals))
     else:
         f["notes"].append("no safe preview for this file type; hash and AV only")
+
+
+def add_html_links(f: dict, hrefs: list[str], anchors: list[tuple[str, str]]) -> None:
+    """Links first with their visible text (so 'shows X, opens Y' can fire), then any other href/src/action."""
+    for h, a in anchors:
+        if re.match(r"(?i)^(https?|ftp)://|^www\.", h):
+            add_link(f, h, None, "html", a)
+    for h in hrefs:
+        if re.match(r"(?i)^(https?|ftp)://|^www\.", h):
+            add_link(f, h, None, "html")
+
+
+def email_file(case: Case, f: dict, path: Path, depth: int, work: Path, budget: dict) -> None:
+    """A forwarded/attached email: headers + body as text, sender checks, and every attachment as a child file."""
+    from email.utils import parseaddr
+
+    m = F.parse_eml(path, work / f"{f['id']}_eml", budget)
+    h = m["headers"]
+    f["email"] = h
+    f["notes"] += m["notes"]
+    head = "\n".join(f"{k}: {v}" for k, v in h.items() if k != "Authentication-Results")
+    f["text"] = (head + "\n\n" + m["text"])[:200000]
+    add_html_links(f, m["hrefs"], m["anchors"])
+    scan_text(f, m["scan"], None, "text")
+
+    name, addr = parseaddr(h.get("From", ""))
+    sender = addr.rsplit("@", 1)[-1].lower() if "@" in addr else ""
+    reply = parseaddr(h.get("Reply-To", ""))[1]
+    reply_dom = reply.rsplit("@", 1)[-1].lower() if "@" in reply else ""
+    if sender:
+        host_flags(f, sender, None, "sender")
+        brand = X.brand_named(name)
+        if brand and not X.owned_by(sender, X.brands()[brand]):
+            flag(f, "high", f"sender name says '{name}' but the address is {X.defang(addr)}")
+    if reply_dom and sender and reply_dom != sender:
+        flag(f, "medium", f"replies go to {X.defang(reply)}, not the sender's domain")
+    auth = h.get("Authentication-Results", "").lower()
+    failed = [k.upper() for k in ("spf", "dkim", "dmarc") if re.search(rf"\b{k}=(fail|softfail|permerror)", auth)]
+    if failed:
+        flag(f, "high", "sender authentication failed: " + ", ".join(failed))
+    for child, child_name in m["files"]:
+        f["children"].append(f"f{len(case.files) + 1}")
+        process(case, child, child_name, f["id"], depth + 1, work, budget)
 
 
 def office(case: Case, f: dict, path: Path, work: Path) -> None:

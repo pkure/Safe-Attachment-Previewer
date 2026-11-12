@@ -15,8 +15,11 @@ comes out:
 - extracted text, with OCR for scanned or image-only pages
 - every link, defanged and tied to its page: link annotations, plain text, OCR, QR codes, and Office `.rels` targets
 - phone numbers, email addresses, macro source code, and PDF active content
-- flags for phishing tells: link text that names one site but opens another, QR codes (quishing), executables
-  disguised as documents, remote-template injection, and HTML smuggling patterns
+- flags for phishing tells: link text that names one site but opens another, lookalike domains (`micros0ft`,
+  `contoso.com.billing-check`), QR codes (quishing), executables disguised as documents, remote-template injection,
+  and HTML smuggling patterns
+- for forwarded emails (`.eml`): spoofed sender names, Reply-To redirection, failed SPF/DKIM/DMARC, and every
+  attachment and inline image unpacked and previewed in turn
 - a ClamAV verdict, plus proof in every report that the container really was offline
 
 The analyst reviews all of this in a locked-down web viewer. The original file never reaches their PC. When a file
@@ -47,8 +50,9 @@ Inside the container (`saferender/saferender/pipeline.py`):
 
 1. **Sniff the real file type** from its bytes, not its name. A `.pdf` that starts with `MZ` gets flagged as a
    disguised executable and is never rendered.
-2. **Unpack archives** with zip-bomb guards: an entry-ratio cap, a total-bytes cap, a file-count cap, and a depth
-   limit. Password-protected entries are flagged, because antivirus can't see inside them.
+2. **Unpack archives and emails** with zip-bomb guards: an entry-ratio cap, a total-bytes cap, a file-count cap, and a depth
+   limit. Password-protected entries are flagged, because antivirus can't see inside them. Attached emails are
+   parsed with Python's standard library, and their attachments and inline images become child files.
 3. **Render.** PDFs go through pdfium. Office files are converted to PDF with headless LibreOffice, with macros never
    run. Images are decoded under a pixel limit.
 4. **Extract** text, link annotations with their on-page positions, QR codes (zxing), OCR text (tesseract), Office
@@ -76,19 +80,27 @@ Full review, including what is **not** solved: [docs/threat-model.md](docs/threa
 
 ## Verification
 
-18 automated tests run inside the same offline, hardened container the analyst path uses. They prove what an
+27 automated tests run inside the same offline, hardened container the analyst path uses. They prove what an
 analyst would see for every sample: the hidden link with its position, OCR-only URLs, QR decode, callback number,
-disguised EXE, macro, PDF JavaScript, EICAR, and the offline proof. Results and timings:
+disguised EXE, macro, PDF JavaScript, EICAR, a forwarded phishing email, a BEC bank-change letter, an HTML
+login page, a voicemail screenshot, a clean spreadsheet, and the offline proof. Results and timings:
 [docs/verification.md](docs/verification.md).
 
 ```bash
 scripts/preview-local.sh build      # build the engine image (needs internet once, for packages and signatures)
 scripts/preview-local.sh samples    # generate the benign test samples
-scripts/preview-local.sh test       # 18 passed
+scripts/preview-local.sh test       # 27 passed
 scripts/preview-local.sh render dist/samples-v2/long-report.pdf   # opens the viewer
 ```
 
 Needs Docker only. Everything runs locally, and it costs $0.
+
+## Keeping signatures and parsers current
+
+The rendering container is never online, so it can't update itself. Instead, a GitHub Actions workflow
+([`nightly-image.yml`](.github/workflows/nightly-image.yml)) rebuilds the image every night. That build is the only
+step with internet: it pulls fresh ClamAV signatures and patched PDF, Office and image libraries, runs all the tests
+inside the offline container, and publishes the image only if they pass. The next morning's cases use the new image.
 
 ## Why not just use Microsoft Defender or the email gateway?
 
