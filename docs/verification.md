@@ -7,8 +7,8 @@ v1 (Azure VM) live evidence: [v1/verification.md](v1/verification.md).
 
 ```
 $ scripts/preview-local.sh test
-...........................                                              [100%]
-27 passed in 72.72s
+........................................                                 [100%]
+40 passed in 90.09s
 ```
 
 The tests run inside the same hardened container (`--network none --read-only --cap-drop ALL ...`) as the real path.
@@ -48,3 +48,22 @@ timing: render 2.42 s, OCR 0.60 s (4 pages), ClamAV 4.68 s
 Screenshots from the local viewer: `evidence/viewer-2-hidden-link.png` (deceptive link flagged and boxed on the page),
 `evidence/viewer-3-qr-filtered.png` (QR filter), `evidence/viewer-4-disguised-exe.png` (escalation card).
 The viewer never uses `innerHTML`; check with `rg innerHTML viewer/` (the only hit is the comment saying so).
+
+## V4: network lock with the network ON (cloud conditions)
+
+```
+$ scripts/preview-local.sh lockdown-proof
+container (fetcher side), no lock:  internet REACHABLE, DNS RESOLVES
+renderer side, under the lock:      {"tcp4": "blocked", "udp4": "blocked", "tcp6": "blocked", "netlink": "blocked", "unix": "open", "dns": "failed"}
+```
+
+**PASS.** Same container, same moment: the fetcher side can reach the internet, the locked renderer can't open a
+socket or resolve a name. `tests/test_lockdown.py` also attacks the lock directly: raw `socket` syscall, a grandchild
+process, trying to undo it, and io_uring. All blocked. `tests/test_fetcher.py` runs the whole fetcher path and checks
+the attestation (`networkLock.verified = true`, input hashes) and that only the report and PNGs leave.
+
+## V5: real files (owner's own, non-sensitive to the project; not committed)
+
+A 9-attachment email (photo, PDFs, saved web page, forwarded email, text, PNG) rendered in 8.8 s, offline. It exposed
+three real-world issues, now fixed with regression tests: EXIF-rotated phone photos, links through the sender's own
+click tracker flagged as deceptive, and base64 inline images in saved web pages read as HTML smuggling.
