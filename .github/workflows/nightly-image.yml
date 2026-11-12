@@ -39,6 +39,11 @@ jobs:
       - name: Test inside the offline, hardened container
         run: scripts/preview-local.sh test
 
+      - name: Prove the network lock WITH the network on (the cloud situation)
+        run: |
+          scripts/preview-local.sh lockdown-proof | tee lock.txt
+          grep -q '"tcp4": "blocked", "udp4": "blocked", "tcp6": "blocked", "netlink": "blocked", "unix": "open", "dns": "failed"' lock.txt
+
       - name: Publish (only reached if tests pass)
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin

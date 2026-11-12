@@ -6,6 +6,8 @@
 #   preview-local.sh test             run unit + end-to-end tests inside the offline container
 #   preview-local.sh render FILE...   render one case and open it in the viewer
 #   preview-local.sh serve            just serve the viewer (http://127.0.0.1:8765)
+#   preview-local.sh lockdown-proof   WITH the network on: show the container can reach the internet, then show
+#                                     the locked renderer can't (the cloud setup, where --network none isn't available)
 set -euo pipefail
 cd "$(dirname "$0")/.."
 IMG=saferender:dev
@@ -48,5 +50,25 @@ case "${1:-}" in
     open "http://127.0.0.1:$PORT/?case=$id" 2>/dev/null || true
     ;;
   serve) serve; echo "http://127.0.0.1:$PORT/" ;;
-  *) sed -n '3,9p' "$0"; exit 1 ;;
+  lockdown-proof)
+    # Same hardening EXCEPT the network: this is what a cloud container looks like.
+    docker run --rm --read-only --tmpfs /tmp:rw,noexec,nosuid,size=1g --cap-drop ALL --security-opt no-new-privileges \
+      --pids-limit 256 --memory 2g --cpus 2 --user 10001:10001 --entrypoint python "$IMG" -c '
+import json, socket, subprocess, sys
+from saferender import lockdown
+def reach():
+    try:
+        socket.create_connection(("1.1.1.1", 443), timeout=5).close(); net = "REACHABLE"
+    except OSError as e:
+        net = f"unreachable ({e.strerror})"
+    try:
+        socket.getaddrinfo("www.microsoft.com", 443); dns = "RESOLVES"
+    except OSError:
+        dns = "fails"
+    return net, dns
+print("container (fetcher side), no lock:  internet %s, DNS %s" % reach())
+print("renderer side, under the lock:      ", json.dumps(lockdown.verify()["probe"]))
+'
+    ;;
+  *) sed -n '3,11p' "$0"; exit 1 ;;
 esac

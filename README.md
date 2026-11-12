@@ -76,11 +76,34 @@ a link index grouped by page, and highlight boxes drawn over links and QR codes 
 | Case IDs regex-validated. Filenames sanitized before touching disk | `pipeline.py`, `formats.py` `safe_name()` |
 | Viewer: CSP `default-src 'none'`, `textContent` only (never `innerHTML`), links shown defanged and never clickable, `no-referrer` | `viewer/index.html`, `viewer/app.js` |
 
+### In the cloud: how files get in when the renderer is offline
+
+Cloud container platforms don't offer `--network none`, and *something* has to download the case. So one job run has
+two parts with very different trust (`saferender/saferender/fetcher.py`, `lockdown.py`):
+
+1. **Fetcher** (trusted, has network): downloads the case's attachment bytes from private storage using the job's
+   managed identity. It never opens or parses them.
+2. **Renderer** (untrusted input, no network): started by the fetcher under a Linux **seccomp** filter that the kernel
+   enforces on it and every program it launches. Any attempt to open a network socket (TCP, UDP, DNS, raw, netlink,
+   io_uring) fails, as does any 32-bit-ABI trick. The filter can't be removed. Its environment is empty: no identity
+   endpoint, no storage name, no credentials.
+3. **Fetcher** checks the output (only `report.json` and PNGs with expected names, sizes and signatures; symlinks and
+   anything else dropped) and uploads it with an `attestation.json`: input hashes, the lock proof for that run, timings,
+   and the image version.
+
+Every run proves the lock on the host it's running on before rendering, and **fails closed** if it can't. The nightly
+build re-proves it with the network switched on (`scripts/preview-local.sh lockdown-proof`):
+
+```
+container (fetcher side), no lock:  internet REACHABLE, DNS RESOLVES
+renderer side, under the lock:      {"tcp4": "blocked", "udp4": "blocked", "tcp6": "blocked", "netlink": "blocked", "unix": "open", "dns": "failed"}
+```
+
 Full review, including what is **not** solved: [docs/threat-model.md](docs/threat-model.md).
 
 ## Verification
 
-27 automated tests run inside the same offline, hardened container the analyst path uses. They prove what an
+40 automated tests run inside the same offline, hardened container the analyst path uses. They prove what an
 analyst would see for every sample: the hidden link with its position, OCR-only URLs, QR decode, callback number,
 disguised EXE, macro, PDF JavaScript, EICAR, a forwarded phishing email, a BEC bank-change letter, an HTML
 login page, a voicemail screenshot, a clean spreadsheet, and the offline proof. Results and timings:
@@ -89,7 +112,7 @@ login page, a voicemail screenshot, a clean spreadsheet, and the offline proof. 
 ```bash
 scripts/preview-local.sh build      # build the engine image (needs internet once, for packages and signatures)
 scripts/preview-local.sh samples    # generate the benign test samples
-scripts/preview-local.sh test       # 27 passed
+scripts/preview-local.sh test       # 40 passed
 scripts/preview-local.sh render dist/samples-v2/long-report.pdf   # opens the viewer
 ```
 
