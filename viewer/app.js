@@ -481,7 +481,7 @@ function tabFile(body, f) {
 	body.append(
 		el("p", {
 			cls: "muted small",
-			text: "Next step for anything unknown: look up the hash in your EDR/threat intel before spending a sandbox detonation.",
+			text: "Next step for anything unknown: look up the hash in your EDR/threat intel, then escalate per your team's process.",
 		}),
 	);
 }
