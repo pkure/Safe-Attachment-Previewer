@@ -23,8 +23,8 @@ comes out:
 - a ClamAV verdict, plus proof in every report that the container really was offline
 
 The analyst reviews all of this in a locked-down web viewer. The original file never reaches their PC. When a file
-can't be previewed safely (a real executable, for example), the viewer says so and recommends escalation: a hash
-lookup first, then a detonation sandbox. Sandbox runs are spent only on the rare file that needs one.
+can't be previewed safely (a real executable, for example), the viewer says so in a red banner, and the analyst escalates it
+manually through the team's normal process (hash lookup, detonation sandbox).
 
 > Lab project with **benign test samples only**: the EICAR test string, a harmless macro, harmless PDFs, a fake
 > "EXE", and test QR codes and links on reserved `.example` domains. It handles no real organization's email.
@@ -39,7 +39,7 @@ flowchart LR
   C -->|report.json + page PNGs| O[(Case output)]
   O --> V["Viewer<br/>static, strict CSP,<br/>no innerHTML, links defanged"]
   V --> Analyst
-  C -. "unpreviewable / disguised EXE" .-> E["Escalate:<br/>hash lookup → detonation sandbox"]
+  C -. "unpreviewable / disguised EXE" .-> E["Red banner: don't open,<br/>analyst escalates manually"]
 ```
 
 **One container per case, started on demand.** Nothing runs while it waits. A case comes in, a new container starts,

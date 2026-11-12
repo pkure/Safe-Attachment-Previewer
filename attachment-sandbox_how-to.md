@@ -46,8 +46,8 @@ page, a voicemail screenshot, a clean timesheet, plus the older test files. All 
 - The **link list** shows every web address with the page it's on. Addresses are "defanged" (`hxxps`, `[.]`) so
   they can't be clicked by accident. Use **copy** if you need one for a lookup.
 - Red and amber **flags** explain what looked wrong, for example "link text shows contoso.com but opens somewhere else".
-- A file that can't be shown safely, like a program pretending to be a PDF, gets an **Escalate** card. Next step:
-  look up its hash, then send it to the company's detonation sandbox if needed.
+- A file that can't be shown safely, like a program pretending to be a PDF, gets a red **don't open** banner.
+  Escalate it by hand the way the team already does (hash lookup, sandbox).
 
 ## Check that it still works
 

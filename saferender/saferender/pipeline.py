@@ -314,13 +314,13 @@ def process(case: Case, path: Path, name: str, parent: str | None, depth: int, w
         flag(f, "high", "executable file (Windows PE)" if kind == "pe" else f"executable or script file type ({ext})")
         if kind == "pe" or not looks_like_text(path):
             # Never executed, never rendered. This is what the paid sandbox (e.g. CrowdStrike) is for.
-            f["escalate"] = "Executable file: can't be previewed safely. Escalate: hash lookup, then detonation sandbox."
+            f["escalate"] = "Executable file: can't be previewed safely. Don't open it. Escalate manually per your process."
     expected = {".pdf": {"pdf"}, **{e: {"image"} for e in F.IMAGE_EXT},
                 **{e: {"ole", "zip", "rtf"} for e in F.OFFICE_EXT}, ".zip": {"zip"}}.get(ext)
     if expected and kind not in expected:
         flag(f, "high", f"file is not what its name says: named {ext}, content is {KIND_LABEL.get(kind, kind)}")
         if kind == "pe":
-            f["escalate"] = "Disguised executable. Escalate: hash lookup, then detonation sandbox."
+            f["escalate"] = "Disguised executable: can't be previewed safely. Don't open it. Escalate manually per your process."
     if kind == "zip" and not F.is_ooxml_or_odf(path):
         if depth >= F.LIMITS["zip_depth"]:
             f["notes"].append("nested archive not unpacked (depth limit)")
