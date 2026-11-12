@@ -1,0 +1,53 @@
+<!doctype html>
+<!-- hal-id: #HAL-20261110-0010-PK-V1 -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<!-- Untrusted content is rendered as text and images only. No inline script, no remote anything. -->
+<meta http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self'; connect-src 'self'; base-uri 'none'; form-action 'none'">
+<!-- frame-ancestors / X-Frame-Options must be sent as HTTP headers by the host (a meta tag is ignored). -->
+<meta name="referrer" content="no-referrer">
+<title>Safe Attachment Viewer</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header id="top">
+  <div class="row">
+    <span id="verdict" class="badge">…</span>
+    <strong id="case"></strong>
+    <span id="iso" class="muted"></span>
+    <span class="spacer"></span>
+    <input id="search" type="search" placeholder="Search all pages  ( / )" autocomplete="off">
+  </div>
+  <nav id="files" class="row"></nav>
+  <div id="escalate" class="escalate" hidden>
+    <span id="escalate-text"></span>
+    <button id="escalate-btn" type="button" disabled title="Connects to your detonation sandbox (e.g. CrowdStrike) in production">Send to detonation sandbox</button>
+  </div>
+</header>
+<main>
+  <aside id="rail">
+    <label class="toggle"><input id="only-flagged" type="checkbox"> Only pages with findings <kbd>f</kbd></label>
+    <div id="thumbs"></div>
+  </aside>
+  <section id="stage">
+    <div id="pagebar" class="row">
+      <button id="prev" type="button" title="Previous page (←)">◀</button>
+      <span id="pageno"></span>
+      <button id="next" type="button" title="Next page (→)">▶</button>
+      <button id="next-flag" type="button" title="Next page with findings (n)">Next finding ▼</button>
+      <span class="spacer"></span>
+      <span class="muted keys"><kbd>←</kbd><kbd>→</kbd> page · <kbd>n</kbd>/<kbd>p</kbd> finding · <kbd>f</kbd> filter</span>
+    </div>
+    <div id="canvas"><div id="pagewrap"><img id="pageimg" alt="rendered page"><div id="boxes"></div></div><pre id="plaintext" hidden></pre></div>
+  </section>
+  <aside id="panel">
+    <div id="tabs" class="row"></div>
+    <div id="tabbody"></div>
+  </aside>
+</main>
+<script src="app.js"></script>
+</body>
+</html>

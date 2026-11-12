@@ -1,0 +1,16 @@
+.cache/
+dist/
+terraform/.terraform/
+terraform/*.tfplan
+terraform/tfplan
+*.tfstate*
+terraform/terraform.tfvars
+terraform/backend.hcl
+evidence/raw/
+.preview/
+dist/all-samples/
+.playwright-mcp/
+__pycache__/
+*.pyc
+.DS_Store
+.pytest_cache/

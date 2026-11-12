@@ -1,0 +1,27 @@
+  ATTACHMENT SANDBOX - LIVE COST METER (estimate)   2026-11-11 00:32:54 UTC
+  resource group: rg-attsandbox
+
+  resource                    type                                 $/hour   hours    so far  note
+  vm-analyst                  virtualMachines                      0.1830    1.26    0.2305  Standard_D2as_v7 Windows, VM running
+  vm-sandbox                  virtualMachines                      0.1830    1.20    0.2189  Standard_D2as_v7 Windows, VM running
+  vm-analyst_OsDisk_1_6314bfa disks                                0.0132    1.26    0.0166  StandardSSD_LRS 127 GB
+  vm-sandbox_OsDisk_1_92fdd0d disks                                0.0132    1.19    0.0156  StandardSSD_LRS 127 GB
+  pe-blob                     privateEndpoints                     0.0100    1.50    0.0150  per endpoint
+  privatelink.blob.core.windo privateDnsZones                      0.0007    1.51    0.0010  $0.50/month
+  stattsbx7cf3e4              storageAccounts                      0.0000    1.51    0.0000  usage-based, ~$0
+  nsg-sandbox                 networkSecurityGroups                0.0000    1.51    0.0000  free
+  vnet-attsandbox             virtualNetworks                      0.0000    1.51    0.0000  free
+  nsg-analyst                 networkSecurityGroups                0.0000    1.51    0.0000  free
+  aa-attsandbox               automationAccounts                   0.0000    1.51    0.0000  usage-based, ~$0
+  aa-attsandbox/Remove-PocRes automationAccounts/runbooks          0.0000    1.51    0.0000  usage-based, ~$0
+  aa-attsandbox/Invoke-Sandbo automationAccounts/runbooks          0.0000    1.51    0.0000  usage-based, ~$0
+  nic-analyst                 networkInterfaces                    0.0000    1.51    0.0000  free
+  bas-attsandbox              bastionHosts                         0.0000    1.50    0.0000  Developer SKU (free)
+  privatelink.blob.core.windo privateDnsZones/virtualNetworkLin    0.0000    1.50    0.0000  free
+  pe-blob.nic.7188c70a-efea-4 networkInterfaces                    0.0000    1.50    0.0000  free
+  nic-sandbox                 networkInterfaces                    0.0000    1.50    0.0000  free
+
+  BURN RATE  $0.403/hour      SESSION SO FAR  $0.50
+  self-destruct in 6.5 h -> worst case if forgotten: $3.11
+
+  List prices from prices.azure.com x uptime. Actual billed cost: `poc.sh cost-actual` (next day).
