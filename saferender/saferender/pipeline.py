@@ -27,7 +27,7 @@ import pypdf
 import pypdfium2 as pdfium
 import pypdfium2.raw as pdfium_c
 import zxingcpp
-from PIL import Image
+from PIL import Image, ImageOps
 
 from . import extract as X
 from . import formats as F
@@ -90,7 +90,12 @@ def add_link(f: dict, url: str, page: int | None, source: str, anchor: str | Non
     shown = DOMAINISH.findall(link["anchor"] or "")
     if shown and link["host"] and not any(link["host"] == d.lower() or link["host"].endswith("." + d.lower())
                                           for d in shown):
-        flag(f, "high", f"link text shows '{shown[0]}' but opens {link['defanged']}", page)
+        if f.get("_sender_base") and X.base_domain(link["host"]) == f["_sender_base"]:
+            # Marketing mail routes every link through the sender's own click tracker. Worth seeing, not alarming.
+            flag(f, "low", f"link text shows '{shown[0]}' but goes through the sender's own link tracker "
+                           f"({X.defang(link['host'])})", page)
+        else:
+            flag(f, "high", f"link text shows '{shown[0]}' but opens {link['defanged']}", page)
     host_flags(f, link["host"], page, "link")
 
 
@@ -153,14 +158,33 @@ def decode_qr(f: dict, page: dict, img: Image.Image) -> None:
             add_link(f, text, page["n"], "qr", rect=rect)
 
 
+OCR_MIN_SIDE = 2000  # phone photos and small screenshots: upscale so letters are big enough for tesseract
+
+
 def ocr(png: Path) -> str:
     env = {**os.environ, "OMP_THREAD_LIMIT": "1"}
+    src, tmp = png, None
     try:
-        r = subprocess.run(["tesseract", str(png), "stdout", "-l", "eng", "--psm", "3"], capture_output=True,
+        with Image.open(png) as im:
+            side = max(im.size)
+            if side < OCR_MIN_SIDE:
+                scale = min(OCR_MIN_SIDE / side, 4)
+                big = im.convert("L").resize((int(im.width * scale), int(im.height * scale)), Image.LANCZOS)
+                fd, name = tempfile.mkstemp(suffix=".png", dir=os.environ.get("TMPDIR", "/tmp"))
+                os.close(fd)
+                tmp = src = Path(name)
+                big.save(src)
+    except (OSError, ValueError):
+        pass
+    try:
+        r = subprocess.run(["tesseract", str(src), "stdout", "-l", "eng", "--psm", "3"], capture_output=True,
                            text=True, timeout=F.LIMITS["ocr_timeout_s"], env=env)
         return r.stdout
     except (subprocess.TimeoutExpired, FileNotFoundError):
         return ""
+    finally:
+        if tmp:
+            tmp.unlink(missing_ok=True)
 
 
 def pdf_keywords(path: Path) -> dict:
@@ -267,7 +291,9 @@ def render_image(case: Case, f: dict, path: Path) -> None:
         with Image.open(path) as im:
             frames = getattr(im, "n_frames", 1)
             im.seek(0)
-            img = im.convert("RGB")
+            # Phone photos are often stored sideways/upside down with an EXIF "orientation" tag. Apply it, as
+            # mail clients do, or the page shows rotated and OCR reads nothing.
+            img = ImageOps.exif_transpose(im).convert("RGB")
     except (Image.DecompressionBombError, OSError, ValueError) as e:
         f["notes"].append(f"image not rendered: {type(e).__name__}")
         return
@@ -354,11 +380,14 @@ def email_file(case: Case, f: dict, path: Path, depth: int, work: Path, budget: 
     f["notes"] += m["notes"]
     head = "\n".join(f"{k}: {v}" for k, v in h.items() if k != "Authentication-Results")
     f["text"] = (head + "\n\n" + m["text"])[:200000]
+    name, addr = parseaddr(h.get("From", ""))
+    sender = addr.rsplit("@", 1)[-1].lower() if "@" in addr else ""
+    # Only trust the sender's domain for click-tracker matching when the receiving server verified it.
+    if sender and re.search(r"\b(dkim|dmarc)=pass\b", h.get("Authentication-Results", "").lower()):
+        f["_sender_base"] = X.base_domain(sender)
     add_html_links(f, m["hrefs"], m["anchors"])
     scan_text(f, m["scan"], None, "text")
 
-    name, addr = parseaddr(h.get("From", ""))
-    sender = addr.rsplit("@", 1)[-1].lower() if "@" in addr else ""
     reply = parseaddr(h.get("Reply-To", ""))[1]
     reply_dom = reply.rsplit("@", 1)[-1].lower() if "@" in reply else ""
     if sender:

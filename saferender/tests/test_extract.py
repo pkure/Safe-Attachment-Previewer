@@ -60,3 +60,9 @@ def test_org_domains_from_env(monkeypatch):
 def test_brand_named_in_display_name():
     assert X.brand_named("Microsoft 365 Security") == "microsoft"
     assert X.brand_named("Jane Smith") is None
+
+
+def test_base_domain():
+    assert X.base_domain("url8792.mail.example.com") == "example.com"
+    assert X.base_domain("www.bbc.co.uk") == "bbc.co.uk"
+    assert X.base_domain("www.dir.ca.gov") == "dir.ca.gov"

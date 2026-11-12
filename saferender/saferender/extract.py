@@ -122,3 +122,14 @@ def brand_named(text: str) -> str | None:
     """A brand keyword spelled out in display text (e.g. a sender name 'Microsoft 365 Security')."""
     words = set(re.findall(r"[a-z]+", (text or "").lower()))
     return next((b for b in brands() if b in words), None)
+
+
+_TWO_LEVEL = {"co.uk", "org.uk", "ac.uk", "gov.uk", "com.au", "net.au", "org.au", "co.nz", "co.jp", "com.br", "com.mx",
+              "ca.gov", "ca.us"}
+
+
+def base_domain(host: str) -> str:
+    """Registrable domain, approximately (no public-suffix list in the offline image): a.b.example.com -> example.com."""
+    parts = (host or "").lower().rstrip(".").split(".")
+    n = 3 if len(parts) >= 3 and ".".join(parts[-2:]) in _TWO_LEVEL else 2
+    return ".".join(parts[-n:])
