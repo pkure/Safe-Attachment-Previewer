@@ -158,3 +158,17 @@ def test_clean_spreadsheet(tmp_path):
     rep = run(tmp_path, "timesheet.xlsx")
     assert rep["files"][0]["pages"]
     assert rep["verdict"] == "NO DETECTIONS", flags(rep)
+
+
+def test_tracked_links_in_legit_mail_are_not_alarming(tmp_path):
+    rep = run(tmp_path, "newsletter-tracked-links.eml")
+    sev = [x["severity"] for f in rep["files"] for x in f["flags"]]
+    assert sev == ["low"], flags(rep)
+    assert rep["verdict"] == "NO DETECTIONS"
+
+
+def test_small_photo_is_upscaled_for_ocr(tmp_path):
+    rep = run(tmp_path, "receipt-photo.jpg")
+    f = rep["files"][0]
+    assert "50834" in f["pages"][0]["text"]
+    assert any(p["number"] == "+17075550136" for p in f["phones"])

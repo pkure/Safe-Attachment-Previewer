@@ -152,6 +152,29 @@ def preview_set(out: Path, work: Path) -> None:
     # 4. Voicemail screenshot (OCR finds the number and the link).
     voicemail_png(out / "voicemail.png")
 
+    # 6. Legit marketing mail: DKIM passes and every link runs through the sender's own click tracker.
+    news = EmailMessage()
+    news["From"] = "Contoso Learning <news@mail.contoso.com>"
+    news["To"] = "analyst@contoso.com"
+    news["Subject"] = "Your course certificate is ready (TEST SAMPLE)"
+    news["Authentication-Results"] = "mx.contoso.com; spf=pass; dkim=pass header.i=@mail.contoso.com; dmarc=pass"
+    news.set_content("Your certificate is ready. TEST SAMPLE ONLY.")
+    news.add_alternative('<html><body><p>Your certificate is ready.</p><p><a href="https://url1234.mail.contoso.com/'
+                         'ls/click?upn=TEST">learn.contoso.com</a></p></body></html>', subtype="html")
+    (out / "newsletter-tracked-links.eml").write_bytes(bytes(news))
+
+    # 7. A small phone photo of a receipt (like real attachments): text is tiny until upscaled for OCR.
+    img = Image.new("RGB", (480, 640), (236, 233, 226))
+    d = ImageDraw.Draw(img)
+    f13 = ImageFont.truetype(FONT, 13)
+    for i, line in enumerate(["NORTHWIND CLINIC (TEST SAMPLE)", "Invoice 50834", "Ph: (707) 555-0136",
+                              "Exam ............ $42.21", "Total ........... $42.21"]):
+        d.text((40, 40 + i * 22), line, font=f13, fill=(40, 40, 40))
+    # Stored upside down with EXIF Orientation=3, exactly like a phone photo taken "the wrong way up".
+    exif = Image.Exif()
+    exif[0x0112] = 3
+    img.rotate(180).save(out / "receipt-photo.jpg", quality=80, exif=exif)
+
     # 5. A clean spreadsheet: the common case, which should come back NO DETECTIONS.
     csv = work / "timesheet.csv"
     csv.write_text("Employee,Mon,Tue,Wed,Thu,Fri,Total\nA. Analyst,8,8,8,8,8,40\nB. Analyst,8,8,7.5,8,8,39.5\n")

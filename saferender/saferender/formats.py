@@ -232,7 +232,9 @@ def read_text(path: Path, is_html: bool) -> tuple[str, list[str], list[tuple[str
         "script tags": len(re.findall(r"(?i)<script\b", txt)),
         "forms": len(re.findall(r"(?i)<form\b", txt)),
         "password fields": len(re.findall(r"(?i)type\s*=\s*['\"]?password", txt)),
-        "base64 blobs (HTML smuggling)": len(re.findall(r"[A-Za-z0-9+/]{2000,}={0,2}", txt)),
+        # Inline images and fonts (data:image/...;base64,...) are normal in saved web pages; smuggled payloads aren't images.
+        "base64 blobs (HTML smuggling)": len(re.findall(r"[A-Za-z0-9+/]{2000,}={0,2}",
+                                                        re.sub(r"data:(?:image|font|application/(?:x-)?font-[\w-]+)/?[\w.+-]*;base64,[A-Za-z0-9+/=\s]+", "", txt))),
         "atob/Blob/msSaveOrOpenBlob": len(re.findall(r"\b(atob|new Blob|msSaveOrOpenBlob|createObjectURL)\b", txt)),
     }
     return text, hrefs, anchors, {k: v for k, v in signals.items() if v}
