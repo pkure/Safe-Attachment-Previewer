@@ -26,7 +26,7 @@ jobs:
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/safe-attachment-previewer
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
 
       - name: Build engine image (pulls today's signatures)
         run: docker build --pull -t saferender:dev saferender
