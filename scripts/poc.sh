@@ -14,7 +14,7 @@
 #   poc.sh down       terraform destroy + verify nothing is left
 set -euo pipefail
 cd "$(dirname "$0")/.."
-TF="terraform -chdir=terraform"
+TF="terraform -chdir=terraform/v1" # v1 (archived): the VM sandbox
 RG=rg-attsandbox
 AA=aa-attsandbox
 

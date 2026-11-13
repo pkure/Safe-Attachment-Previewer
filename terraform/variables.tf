@@ -64,3 +64,20 @@ variable "log_retention_days" {
   type        = number
   default     = 30
 }
+
+variable "analyst_pc" {
+  description = "Create the lab analyst PC (Windows 11 + classic Outlook, via Bastion Developer)."
+  type        = bool
+  default     = true
+}
+
+variable "vm_size" {
+  type    = string
+  default = "Standard_D2as_v7" # 2 vCPU / 8 GB; worked in this subscription for v1
+}
+
+variable "shutdown_time" {
+  description = "Daily auto-shutdown of the analyst PC (HHMM, Pacific)."
+  type        = string
+  default     = "1900"
+}

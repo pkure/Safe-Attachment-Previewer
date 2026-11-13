@@ -1,6 +1,10 @@
 .cache/
 dist/
 terraform/.terraform/
+terraform/v1/.terraform/
+terraform/v1/tfplan
+terraform/v1/terraform.tfvars
+terraform/v1/backend.hcl
 terraform/*.tfplan
 terraform/tfplan
 *.tfstate*
@@ -14,7 +18,3 @@ __pycache__/
 *.pyc
 .DS_Store
 .pytest_cache/
-infra/.terraform/
-infra/tfplan
-infra/terraform.tfvars
-infra/backend.hcl
