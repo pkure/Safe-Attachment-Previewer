@@ -109,6 +109,7 @@ resource "azurerm_container_app_environment" "env" {
   name                       = "cae-sap-${random_id.suffix.hex}"
   resource_group_name        = azurerm_resource_group.lab.name
   location                   = var.location
+  logs_destination           = "log-analytics"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.logs.id
   tags                       = local.tags
 }

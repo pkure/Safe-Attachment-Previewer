@@ -133,23 +133,53 @@ on policy. EDR sees the file only after it is already on the endpoint. This tool
 a person has to look at the file, and keeps that moment off the workstation. Escalation to a commercial sandbox stays
 available, but only for the rare file that needs it.
 
-## Roadmap: cloud version
+## Cloud version: one click in classic Outlook
 
-The local version above is the finished engine. The cloud version swaps the hosting and reuses the mailbox intake that
-v1 built and verified:
+Built for a security team working a **shared mailbox in classic Outlook on Windows**:
 
-- **Intake:** analyst drags an email to a `Sandbox` folder. A managed identity, limited by Exchange RBAC for
-  Applications to that one mailbox, fetches the attachments.
-- **Engine:** Azure Container Apps **Job**, one run per case, scale to zero, no outbound network. Same image, same
-  hardening.
-- **Viewer:** an Entra ID-protected web app, linked from a short notification email.
-- **Infrastructure as code:** Terraform, with nothing running and $0 cost between cases.
+1. The analyst selects one or more emails in the shared mailbox and clicks **Preview safely** (an Outlook add-in).
+2. A browser tab opens right away with live progress: email copied into isolated storage → network lock verified →
+   rendering page 4 of 12 → virus scan → ready.
+3. The same tab turns into the preview. Nothing was downloaded or opened on the analyst's PC.
+
+```mermaid
+flowchart LR
+  O["Classic Outlook<br/>shared mailbox"] -- "message ID +<br/>analyst's token" --> P["Portal<br/>(Container App, scale to zero)"]
+  P -- "on behalf of the analyst<br/>Mail.Read.Shared" --> X[(Exchange Online)]
+  P -- "raw email, never parsed here" --> S[("Storage<br/>keyless, 7-day retention")]
+  P -- "start" --> J["Render job (one per email)<br/>fetcher -> renderer under<br/>kernel no-network lock"]
+  J -- "PNG pages, report,<br/>live status, attestation" --> S
+  B["Analyst's browser<br/>(Entra sign-in)"] -- "progress, then preview" --> P
+```
+
+**Who can use it is decided by permissions the organization already manages.** The tool has **no mailbox access of
+its own**. When an analyst clicks the button, the portal reads that one email *as the analyst* (OAuth on-behalf-of),
+so Exchange refuses anything the analyst couldn't already open in Outlook. On top of that, Entra only issues a token to
+members of one security group. Best practice: make it the same mail-enabled group that has Full Access to the shared
+mailbox, so **one membership controls both**, and offboarding someone removes both.
+
+| | |
+|---|---|
+| **Add-in** | XML manifest (classic Outlook compatible): shared mailboxes, multi-select, sign-in through Outlook itself (nested app auth), browser fallback for older builds. `portal/addin/` |
+| **Portal** | Validates the token and app role, exchanges it on-behalf-of, copies the raw email to storage, starts the job, serves the viewer. No client secret: its managed identity is the app's credential. `portal/app.py` |
+| **Render job** | Azure Container Apps Job, one execution per email, same hardened engine; the renderer runs under the seccomp lock and gets no credentials. |
+| **Data** | Storage with account keys disabled (Entra only), double encryption, TLS 1.2+, deleted after 7 days. |
+| **Evidence** | Audit line per sign-in/denial/case/view, storage access logs, per-case attestation. Controls mapped to NIST SP 800-53 in [docs/controls.md](docs/controls.md). |
+| **Infrastructure** | Terraform (`terraform/`), plus an optional lab analyst PC: Windows 11 with Microsoft 365 Apps (classic Outlook), no public IP, Bastion Developer. |
+
+**Cost:** the previewer costs about **$0–1 a month** at a team's volume (20–40 emails a day): Container Apps' monthly
+free grant covers the compute, and nothing runs between clicks. The lab analyst PC adds about $0.10/hour while it's on.
+A private endpoint for storage is possible, but it moves Container Apps to a plan with a management fee of about
+$73/month, so it's left as an organization decision ([threat model](docs/threat-model.md), I5).
+
+**Requirements for a real rollout:** the shared mailbox must be in Exchange Online; an admin deploys the add-in to the
+analyst group (Microsoft 365 admin center > Integrated apps) and grants consent for delegated `Mail.Read.Shared`.
 
 ## History: v1 (Windows VM sandbox)
 
 The first version used a Terraform-built Windows VM in Azure with no internet and no DNS. Analysts dragged an email to a
 folder and got a verdict email back in 37–80 seconds. It worked and was verified live: network isolation, mailbox-scoped
-permissions, and four test samples end to end. Code is still here: `terraform/`, `runbooks/`, `sandbox/`,
+permissions, and four test samples end to end. Code is still here: `terraform/v1/`, `runbooks/`, `sandbox/`,
 `scripts/poc.sh`.
 
 What v1 taught, and why v2 exists:
@@ -168,12 +198,15 @@ v1 docs: [threat model](docs/v1/threat-model.md), [live verification](docs/v1/ve
 ## Repo map
 
 ```
-saferender/   the engine: Dockerfile, pipeline (render + extract + flag), tests, sample generator
-viewer/       static analyst viewer (HTML/CSS/JS, no dependencies)
-scripts/      preview-local.sh (v2 entry point); poc.sh, exchange-setup.ps1, build tools (v1)
-docs/         threat model, verification; docs/v1/ for the VM version
+saferender/   the engine: Dockerfile, pipeline (render + extract + flag), fetcher + network lock, tests, samples
+portal/       cloud portal: Outlook add-in (manifest, task pane), API, sign-in, viewer hosting, tests
+viewer/       analyst viewer (HTML/CSS/JS, no dependencies): live progress, then the preview
+terraform/    cloud v2 (Container Apps, storage, Entra app, lab analyst PC); terraform/v1/ = archived VM sandbox
+scripts/      preview-local.sh (local), cloud.sh (cloud lab), lab-analyst.sh + exchange-setup-v2.ps1 (lab tenant);
+              poc.sh, exchange-setup.ps1, build tools (v1)
+docs/         threat model, NIST 800-53 control map, verification; docs/v1/ for the VM version
 evidence/     viewer screenshots, v1 cost meter snapshot
-terraform/, runbooks/, sandbox/   v1 Azure VM sandbox (reference)
+runbooks/, sandbox/   v1 Azure VM sandbox (reference)
 ```
 
 Step-by-step, non-technical: [attachment-sandbox_how-to.md](attachment-sandbox_how-to.md). MIT licensed.

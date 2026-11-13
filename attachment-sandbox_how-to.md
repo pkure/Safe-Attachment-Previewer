@@ -13,8 +13,47 @@ hal-id: "#HAL-20261107-0023-PK-H1"
 
 **Test samples only.** Only fake test files go in here, never real company email.
 
-**Money:** $0. It all runs on this Mac. (The cloud version is planned. It costs nothing while idle, and its price
-will be confirmed before anything gets built.)
+**Two ways to run it:**
+- **On this Mac** (below, "Preview a file"): $0, for trying files quickly.
+- **In the cloud lab with classic Outlook** (next section): the way a security team would really use it.
+
+## The cloud lab: one button in classic Outlook
+
+**What happens when an analyst clicks "Preview safely":**
+1. They select one or more emails in the shared security mailbox and click **Preview safely** on the ribbon.
+2. A browser tab opens with a checklist that fills in live: email copied into the sealed storage, network lock
+   checked, pages being drawn ("page 4 of 12"), virus scan, ready.
+3. The tab turns into the preview. The attachment was never downloaded or opened on their computer.
+
+**Who can use it:** only people in the **SecOps Triage Analysts** group. That same group is what gives Full Access to
+the shared mailbox, so one membership controls both. The tool reads an email *as the analyst who clicked*, so it can
+never see a mailbox that analyst couldn't open in Outlook anyway.
+
+**Money:** the previewer costs about $0–1 a month (nothing runs between clicks). The lab's Windows "analyst PC" costs
+about $0.10 an hour while it's on and turns itself off every evening at 7 PM; it also costs about $10 a month just for
+its disk while it exists.
+
+| Task | How |
+|---|---|
+| Turn the analyst PC on / off | `scripts/cloud.sh vm-start` / `scripts/cloud.sh vm-stop` |
+| Its admin password (to the Keychain, not the screen) | `scripts/cloud.sh vm-password` |
+| Connect to it | Azure portal → **vm-analyst** → **Connect** → **Bastion** → user `labadmin` |
+| See who did what (last hour) | `scripts/cloud.sh logs` |
+| Remove the whole cloud lab | `scripts/cloud.sh down` |
+| Deploy it again | `scripts/cloud.sh up` |
+
+**One-time steps that need a person (an admin):**
+1. ★ `scripts/lab-analyst.sh <domain>`: makes the test analyst `analyst1` (password goes to the Keychain).
+2. ★ `pwsh scripts/exchange-setup-v2.ps1 -Domain <domain>`: makes the group, gives it the shared mailbox.
+3. `scripts/cloud.sh up`: builds everything (about 10 minutes).
+4. ★ On the analyst PC, in classic Outlook, signed in as analyst1: **File → Account Settings → Account Settings →
+   Change → More Settings → Advanced → Add** the shared mailbox (group access doesn't add it automatically).
+5. ★ Load the add-in: in Outlook, **Get Add-ins → My add-ins → Add a custom add-in → From URL**, and paste the
+   address from `scripts/cloud.sh status` (`addin_manifest_url`). In a real company, IT pushes it to the group
+   instead (Microsoft 365 admin center → Integrated apps).
+
+**Paperwork for a real company:** [docs/controls.md](docs/controls.md) maps every safeguard to the NIST 800-53
+controls security reviewers ask about, and lists what the organization still has to provide.
 
 ## One-time setup
 
@@ -51,7 +90,8 @@ page, a voicemail screenshot, a clean timesheet, plus the older test files. All 
 
 ## Check that it still works
 
-`scripts/preview-local.sh test` should end with **27 passed**.
+`scripts/preview-local.sh test` should end with **41 passed** (the engine). The cloud portal has its own 27 tests,
+run automatically on GitHub every night along with a security scan of both programs.
 
 ## If something goes wrong
 
@@ -62,5 +102,6 @@ page, a voicemail screenshot, a clean timesheet, plus the older test files. All 
 
 ## The old version (v1)
 
-v1 was a throwaway Windows computer in Azure, run with `scripts/poc.sh`. It's kept for reference and is torn down.
+v1 was a throwaway Windows computer in Azure, run with `scripts/poc.sh` (its Terraform is archived in
+`terraform/v1/`). It's kept for reference and is torn down.
 Its run steps are in `docs/v1/how-to.md`.
