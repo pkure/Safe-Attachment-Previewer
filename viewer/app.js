@@ -60,9 +60,13 @@ async function load() {
 	} catch {
 		return fatal("Could not load report.");
 	}
+	if (r.status === 404) return waitForReport();
 	if (!r.ok) return fatal(`Report not found for case ${caseId}.`);
 	state.rep = await r.json();
+	$("progress").hidden = true;
+	document.body.classList.remove("waiting");
 	header();
+	attestation();
 	// Open on the attachment that most needs eyes: viewable first, then worst severity, then most flags.
 	const rank = { malicious: 0, high: 1, medium: 2, ok: 3 };
 	const first = [...state.rep.files].sort(
@@ -72,6 +76,67 @@ async function load() {
 			b.flags.length - a.flags.length,
 	)[0];
 	selectFile(first);
+}
+
+// Cloud mode: until report.json exists, show the run's live status.json (written by the fetcher) as a checklist.
+const STEPS = [
+	["queued", "Request received"],
+	["fetching", "Email copied into isolated storage"],
+	["locked", "Network lock verified"],
+	["rendering", "Rendering pages"],
+	["scanning", "Virus scan"],
+	["checking", "Checking the output"],
+	["done", "Ready"],
+];
+
+async function waitForReport() {
+	let st = null;
+	try {
+		const r = await fetch(base + "status.json", { cache: "no-store" });
+		if (r.ok) st = await r.json();
+	} catch {
+		/* retry below */
+	}
+	if (!st) return fatal(`Report not found for case ${caseId}.`);
+	document.body.classList.add("waiting");
+	$("progress").hidden = false;
+	if (!$("p-subject").textContent) {
+		try {
+			const m = await (await fetch(base + "meta.json", { cache: "no-store" })).json();
+			$("p-subject").textContent = `${m.subject || "(no subject)"}  ·  from ${m.from || "unknown"}`;
+		} catch {
+			/* optional */
+		}
+	}
+	const at = Math.max(0, STEPS.findIndex(([k]) => k === st.stage));
+	const ol = $("p-steps");
+	ol.replaceChildren();
+	STEPS.forEach(([k, label], i) => {
+		const cls = st.stage === "failed" ? (i < at ? "ok" : "") : i < at || st.stage === "done" ? "ok" : i === at ? "now" : "";
+		ol.append(el("li", { cls, text: label }));
+	});
+	let detail = "";
+	if (st.stage === "rendering" && st.file)
+		detail = `${st.file}${st.page ? `, page ${st.page}${st.pages ? ` of ${st.pages}` : ""}` : ""}`;
+	if (st.stage === "failed") {
+		const last = (st.steps || []).filter((x) => x.note).pop();
+		detail = last ? last.note : "The preview could not be completed. Escalate manually per your process.";
+		$("p-detail").className = "warn";
+	}
+	$("p-detail").textContent = detail;
+	if (st.stage === "done") return setTimeout(load, 300);
+	if (st.stage !== "failed") setTimeout(waitForReport, 1500);
+}
+
+async function attestation() {
+	try {
+		const r = await fetch(base + "attestation.json", { cache: "no-store" });
+		if (!r.ok) return;
+		const a = await r.json();
+		if (a.networkLock && a.networkLock.verified) $("iso").textContent += " · network lock verified";
+	} catch {
+		/* local runs have no attestation */
+	}
 }
 
 function fatal(msg) {

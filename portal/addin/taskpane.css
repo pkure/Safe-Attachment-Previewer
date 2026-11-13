@@ -1,0 +1,19 @@
+/* hal-id: #HAL-20261113-0013-PK-T3 */
+:root { --fg: #1b1f24; --muted: #5d6670; --brand: #0b5cad; --ok: #1a7f37; --err: #b42318; --warn: #9a6700; --line: #d8dee4; }
+* { box-sizing: border-box; }
+body { margin: 0; padding: 12px 14px; font: 14px/1.45 "Segoe UI", -apple-system, sans-serif; color: var(--fg); background: #fff; }
+header { display: flex; align-items: center; gap: 8px; }
+h1 { font-size: 17px; margin: 0; }
+h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); margin: 16px 0 6px; }
+.lead { color: var(--muted); margin: 8px 0 0; }
+ul { list-style: none; padding: 0; margin: 0 0 10px; }
+li { padding: 6px 0; border-bottom: 1px solid var(--line); word-break: break-word; }
+button { width: 100%; padding: 9px 12px; border: 0; border-radius: 6px; background: var(--brand); color: #fff; font: inherit; font-weight: 600; cursor: pointer; }
+button:disabled { opacity: .5; cursor: default; }
+a { color: var(--brand); font-weight: 600; }
+.muted { color: var(--muted); }
+.stage { font-size: 12.5px; color: var(--muted); }
+.s-done { color: var(--ok); font-weight: 600; }
+.s-failed, .err { color: var(--err); }
+.ok { color: var(--ok); } .warn { color: var(--warn); }
+#msg { min-height: 1.4em; }

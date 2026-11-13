@@ -1,0 +1,31 @@
+<!doctype html>
+<!-- hal-id: #HAL-20261113-0011-PK-T1 -->
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Safe Preview</title>
+  <link rel="stylesheet" href="taskpane.css">
+  <script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>
+  <script src="msal-browser.min.js"></script>
+  <script src="taskpane.js"></script>
+</head>
+<body>
+  <header>
+    <img src="icon-32.png" alt="" width="24" height="24">
+    <h1>Safe Preview</h1>
+  </header>
+  <p class="lead">Attachments are opened in an isolated, offline cloud renderer. Nothing is opened on this PC.</p>
+  <section>
+    <h2 id="sel-title">Selected email</h2>
+    <ul id="selection"><li class="muted">Reading your selection…</li></ul>
+    <button id="go" type="button" disabled>Preview safely</button>
+  </section>
+  <section id="cases-wrap" hidden>
+    <h2>Progress</h2>
+    <ul id="cases"></ul>
+    <p class="muted">The preview opens in your browser. If it didn't, use the links above.</p>
+  </section>
+  <p id="msg" role="status"></p>
+</body>
+</html>

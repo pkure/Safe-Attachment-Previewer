@@ -1,0 +1,8 @@
+# Copy to terraform.tfvars (gitignored).
+tenant_id          = "00000000-0000-0000-0000-000000000000"
+subscription_id    = "00000000-0000-0000-0000-000000000000"
+analyst_group_name = "SecOps Triage Analysts"
+lab_mailboxes      = "secops-triage@contoso.onmicrosoft.com"
+org_domains        = "contoso.com"
+# engine_image     = "ghcr.io/<owner>/safe-attachment-previewer:sha-abc1234"
+# portal_image     = "ghcr.io/<owner>/safe-attachment-previewer:portal-sha-abc1234"

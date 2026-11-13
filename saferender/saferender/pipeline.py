@@ -67,8 +67,23 @@ def sha256(p: Path) -> str:
     return h.hexdigest()
 
 
+# Simple mode (SAFERENDER_SIMPLE=1): page images, text and links only. Heuristic findings are switched off; AV hits and
+# the "can't preview an executable" banner stay, because those are facts, not heuristics.
+SIMPLE = os.environ.get("SAFERENDER_SIMPLE") == "1"
+
+
 def flag(f: dict, severity: str, text: str, page: int | None = None) -> None:
+    if SIMPLE:
+        return
     f["flags"].append({"severity": severity, "text": text, "page": page})
+
+
+def progress(**kw) -> None:
+    """One line on stdout for the cloud fetcher to turn into live status. Names are attacker-influenced: the viewer
+    only ever shows them as text."""
+    if "file" in kw:
+        kw["file"] = str(kw["file"])[:120]
+    print("@@progress " + json.dumps(kw), flush=True)
 
 
 def add_link(f: dict, url: str, page: int | None, source: str, anchor: str | None = None,
@@ -135,6 +150,7 @@ def save_page(case: Case, f: dict, n: int, img: Image.Image) -> dict:
     page = {"n": n, "image": f"pages/{stem}.png", "thumb": f"pages/{stem}.t.png", "w": img.width, "h": img.height,
             "chars": 0, "ocr": False, "text": ""}
     f["pages"].append(page)
+    progress(stage="render", file=f["name"], page=n, pages=f.get("pageCount") or None)
     return page
 
 
@@ -308,6 +324,7 @@ def render_image(case: Case, f: dict, path: Path) -> None:
 # ---------------------------------------------------------------- dispatch
 def process(case: Case, path: Path, name: str, parent: str | None, depth: int, work: Path, budget: dict) -> None:
     f = case.new_file(name, path, parent)
+    progress(stage="file", file=name, n=len(case.files))
     ext = Path(name).suffix.lower()
     kind = f["kind"]
     if ext in F.EXEC_EXT or kind == "pe":
@@ -458,9 +475,11 @@ def isolation() -> dict:
 def verdict(files: list[dict]) -> str:
     if any(f["av"] for f in files):
         return "MALICIOUS"
-    if any(x["severity"] in ("high", "medium") for f in files for x in f["flags"]):
+    if any(f["escalate"] for f in files) or any(x["severity"] in ("high", "medium") for f in files for x in f["flags"]):
         return "SUSPICIOUS"
-    return "NO DETECTIONS" if files else "NO FILE ATTACHMENTS"
+    if not files:
+        return "NO FILE ATTACHMENTS"
+    return "NO AV DETECTIONS" if SIMPLE else "NO DETECTIONS"
 
 
 def main() -> None:
@@ -483,6 +502,7 @@ def main() -> None:
         budget["files"] += 1
         process(case, dst, src.name, None, 0, work, budget)
     t0 = time.monotonic()
+    progress(stage="scan", files=len(case.files))
     hits, av_status = F.clamav_scan(work)
     case.timing["av_s"] = round(time.monotonic() - t0, 2)
     for f in case.files:
@@ -494,7 +514,7 @@ def main() -> None:
                     if any(x["page"] == p["n"] for k in ("links", "qr", "phones", "emails", "flags") for x in f[k]))
     case.timing["total_s"] = round(time.monotonic() - t_start, 2)
     report = {
-        "schema": 1, "caseId": a.case, "verdict": verdict(case.files),
+        "schema": 1, "caseId": a.case, "verdict": verdict(case.files), "mode": "simple" if SIMPLE else "full",
         "generatedUtc": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "isolation": isolation(), "engines": {"clamav": F.clamav_version(), "clamavStatus": av_status},
         "timing": case.timing,

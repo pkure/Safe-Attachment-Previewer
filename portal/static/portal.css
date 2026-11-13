@@ -1,0 +1,15 @@
+/* hal-id: #HAL-20261113-0015-PK-S2 */
+:root { --fg: #1b1f24; --muted: #5d6670; --brand: #0b5cad; --line: #d8dee4; --bg: #f6f8fa; }
+* { box-sizing: border-box; }
+body { margin: 0; font: 14px/1.5 "Segoe UI", -apple-system, sans-serif; color: var(--fg); background: var(--bg); }
+header { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 12px 20px; background: #fff; border-bottom: 1px solid var(--line); flex-wrap: wrap; }
+h1 { font-size: 18px; margin: 0; }
+.who { color: var(--muted); }
+main { max-width: 1100px; margin: 0 auto; padding: 16px 20px; }
+.hint { color: var(--muted); }
+table { width: 100%; border-collapse: collapse; background: #fff; border: 1px solid var(--line); }
+th, td { text-align: left; padding: 8px 10px; border-bottom: 1px solid var(--line); vertical-align: top; word-break: break-word; }
+th { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }
+a { color: var(--brand); }
+.st { white-space: nowrap; font-weight: 600; }
+@media (max-width: 700px) { th:nth-child(3), td:nth-child(3), th:nth-child(5), td:nth-child(5) { display: none; } }
