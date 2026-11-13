@@ -1,6 +1,10 @@
 # Nightly engine rebuild: fresh ClamAV signatures + patched parsers (pdfium, LibreOffice, Pillow, tesseract).
 # This build is the ONLY step with internet. The image it publishes renders files with no network at all.
-# A new image is published only if every test passes inside the hardened, offline container.
+# A new image is published only if every test passes inside the hardened, offline container AND the vulnerability
+# scan finds no fixable critical issue. A failed nightly run opens (or comments on) a GitHub issue.
+#
+# Tags: main/schedule -> latest, YYYYMMDD, sha-xxxxxxx (engine) and portal-latest, portal-sha-xxxxxxx (portal).
+#       manual run on another branch -> sha-xxxxxxx and portal-sha-xxxxxxx only (for lab testing; never "latest").
 name: nightly-image
 
 on:
@@ -9,20 +13,24 @@ on:
   workflow_dispatch:
   push:
     branches: [main]
-    paths: ["saferender/**", ".github/workflows/nightly-image.yml"]
+    paths: ["saferender/**", "portal/**", "viewer/**", ".github/workflows/nightly-image.yml"]
 
 permissions:
   contents: read
   packages: write
+  issues: write
 
 concurrency:
-  group: nightly-image
+  group: nightly-image-${{ github.ref }}
   cancel-in-progress: true
+
+env:
+  TRIVY: aquasec/trivy:0.76.1
 
 jobs:
   build-test-publish:
     runs-on: ubuntu-24.04
-    timeout-minutes: 45
+    timeout-minutes: 50
     env:
       IMAGE: ghcr.io/${{ github.repository_owner }}/safe-attachment-previewer
     steps:
@@ -31,26 +39,63 @@ jobs:
       - name: Build engine image (pulls today's signatures)
         run: docker build --pull -t saferender:dev saferender
 
+      - name: Build portal image
+        run: docker build --pull -f portal/Dockerfile -t sap-portal:dev .
+
       - name: Generate benign test samples
         run: |
           scripts/build.sh                 # v1 samples: EICAR zip, macro xlsm, JS PDF, clean PDF
           scripts/preview-local.sh samples # v2 samples
 
-      - name: Test inside the offline, hardened container
+      - name: Test engine inside the offline, hardened container
         run: scripts/preview-local.sh test
+
+      - name: Test portal (offline; Entra, Graph and Azure stood in for)
+        run: |
+          docker run --rm -u 0 -v "$PWD/portal/tests:/app/portal/tests:ro" sap-portal:dev \
+            sh -c 'pip install -q pytest==9.2.0 && cd /app/portal && python -m pytest -q -p no:cacheprovider tests'
 
       - name: Prove the network lock WITH the network on (the cloud situation)
         run: |
           scripts/preview-local.sh lockdown-proof | tee lock.txt
           grep -q '"tcp4": "blocked", "udp4": "blocked", "tcp6": "blocked", "netlink": "blocked", "unix": "open", "dns": "failed"' lock.txt
 
-      - name: Publish (only reached if tests pass)
+      - name: Vulnerability scan (Trivy; fails on fixable CRITICAL)
+        run: |
+          for img in saferender:dev sap-portal:dev; do
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY" image --quiet \
+              --severity CRITICAL --ignore-unfixed --exit-code 1 --scanners vuln "$img"
+            docker run --rm -v /var/run/docker.sock:/var/run/docker.sock "$TRIVY" image --quiet \
+              --severity HIGH,CRITICAL --ignore-unfixed --exit-code 0 --scanners vuln --format table "$img" \
+              | tail -n 40   # report HIGH for the record; only fixable CRITICAL blocks the publish
+          done
+
+      - name: Publish (only reached if tests and scan pass)
         run: |
           echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
           img="${IMAGE,,}"
-          day="$(date -u +%Y%m%d)"
-          for tag in latest "$day" "sha-${GITHUB_SHA::7}"; do
-            docker tag saferender:dev "$img:$tag"
-            docker push -q "$img:$tag"
-          done
+          sha="sha-${GITHUB_SHA::7}"
+          if [ "$GITHUB_REF" = "refs/heads/main" ]; then
+            engine_tags="latest $(date -u +%Y%m%d) $sha"; portal_tags="portal-latest portal-$sha"
+          else
+            engine_tags="$sha"; portal_tags="portal-$sha"
+          fi
+          for t in $engine_tags; do docker tag saferender:dev "$img:$t" && docker push -q "$img:$t"; done
+          for t in $portal_tags; do docker tag sap-portal:dev "$img:$t" && docker push -q "$img:$t"; done
+          echo "published engine: $engine_tags / portal: $portal_tags" >> "$GITHUB_STEP_SUMMARY"
           docker run --rm --network none --entrypoint sh saferender:dev -c 'sigtool --info /var/lib/clamav/daily.c* | head -3' || true
+
+      - name: Open an issue if the nightly build failed
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          title="Nightly image build failed"
+          url="${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          n=$(gh issue list -R "${{ github.repository }}" --state open --search "$title in:title" --json number -q '.[0].number')
+          if [ -n "$n" ]; then
+            gh issue comment "$n" -R "${{ github.repository }}" --body "Failed again: $url"
+          else
+            gh issue create -R "${{ github.repository }}" --title "$title" \
+              --body "The nightly build did not publish, so yesterday's image (and signatures) stay in use. Run: $url"
+          fi

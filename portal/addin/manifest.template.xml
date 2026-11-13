@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- hal-id: #HAL-20261113-0010-PK-M1
+     Outlook add-in (add-in only XML manifest: the most compatible format for classic Outlook on Windows).
+     Served by the portal with the placeholders filled in: GET /addin/manifest.xml. Deploy it centrally (Microsoft 365 admin
+     center > Integrated apps, assigned to the analyst group) or sideload it for testing. -->
+<OfficeApp xmlns="http://schemas.microsoft.com/office/appforoffice/1.1"
+           xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+           xmlns:bt="http://schemas.microsoft.com/office/officeappbasictypes/1.0"
+           xmlns:mailappor="http://schemas.microsoft.com/office/mailappversionoverrides/1.0"
+           xsi:type="MailApp">
+  <Id>{{ADDIN_ID}}</Id>
+  <Version>1.0.0.0</Version>
+  <ProviderName>Safe Attachment Previewer</ProviderName>
+  <DefaultLocale>en-US</DefaultLocale>
+  <DisplayName DefaultValue="Safe Preview"/>
+  <Description DefaultValue="Preview suspicious email attachments in an isolated cloud renderer. Nothing is opened on this PC."/>
+  <IconUrl DefaultValue="{{PUBLIC_URL}}/addin/icon-64.png"/>
+  <HighResolutionIconUrl DefaultValue="{{PUBLIC_URL}}/addin/icon-128.png"/>
+  <SupportUrl DefaultValue="{{PUBLIC_URL}}/"/>
+  <AppDomains>
+    <AppDomain>{{PUBLIC_URL}}</AppDomain>
+    <AppDomain>https://login.microsoftonline.com</AppDomain>
+  </AppDomains>
+  <Hosts>
+    <Host Name="Mailbox"/>
+  </Hosts>
+  <Requirements>
+    <Sets>
+      <Set Name="Mailbox" MinVersion="1.1"/>
+    </Sets>
+  </Requirements>
+  <FormSettings>
+    <Form xsi:type="ItemRead">
+      <DesktopSettings>
+        <SourceLocation DefaultValue="{{PUBLIC_URL}}/addin/taskpane.html"/>
+        <RequestedHeight>250</RequestedHeight>
+      </DesktopSettings>
+    </Form>
+  </FormSettings>
+  <!-- Read the selected item's ID, subject and shared-mailbox owner. It never reads attachments or bodies. -->
+  <Permissions>ReadItem</Permissions>
+  <Rule xsi:type="RuleCollection" Mode="Or">
+    <Rule xsi:type="ItemIs" ItemType="Message" FormType="Read"/>
+  </Rule>
+  <DisableEntityHighlighting>false</DisableEntityHighlighting>
+  <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides" xsi:type="VersionOverridesV1_0">
+    <VersionOverrides xmlns="http://schemas.microsoft.com/office/mailappversionoverrides/1.1" xsi:type="VersionOverridesV1_1">
+      <Requirements>
+        <bt:Sets DefaultMinVersion="1.13">
+          <bt:Set Name="Mailbox"/>
+        </bt:Sets>
+      </Requirements>
+      <Hosts>
+        <Host xsi:type="MailHost">
+          <DesktopFormFactor>
+            <!-- Activate in shared mailboxes and shared folders (the security team's mailbox). -->
+            <SupportsSharedFolders>true</SupportsSharedFolders>
+            <ExtensionPoint xsi:type="MessageReadCommandSurface">
+              <OfficeTab id="TabDefault">
+                <Group id="sapGroup">
+                  <Label resid="Group.Label"/>
+                  <Control xsi:type="Button" id="sapPreviewButton">
+                    <Label resid="Button.Label"/>
+                    <Supertip>
+                      <Title resid="Button.Label"/>
+                      <Description resid="Button.Tooltip"/>
+                    </Supertip>
+                    <Icon>
+                      <bt:Image size="16" resid="Icon.16"/>
+                      <bt:Image size="32" resid="Icon.32"/>
+                      <bt:Image size="80" resid="Icon.80"/>
+                    </Icon>
+                    <Action xsi:type="ShowTaskpane">
+                      <SourceLocation resid="Taskpane.Url"/>
+                      <SupportsPinning>true</SupportsPinning>
+                      <!-- Select several emails, preview them all. -->
+                      <SupportsMultiSelect>true</SupportsMultiSelect>
+                    </Action>
+                  </Control>
+                </Group>
+              </OfficeTab>
+            </ExtensionPoint>
+          </DesktopFormFactor>
+        </Host>
+      </Hosts>
+      <Resources>
+        <bt:Images>
+          <bt:Image id="Icon.16" DefaultValue="{{PUBLIC_URL}}/addin/icon-16.png"/>
+          <bt:Image id="Icon.32" DefaultValue="{{PUBLIC_URL}}/addin/icon-32.png"/>
+          <bt:Image id="Icon.80" DefaultValue="{{PUBLIC_URL}}/addin/icon-80.png"/>
+        </bt:Images>
+        <bt:Urls>
+          <bt:Url id="Taskpane.Url" DefaultValue="{{PUBLIC_URL}}/addin/taskpane.html"/>
+        </bt:Urls>
+        <bt:ShortStrings>
+          <bt:String id="Group.Label" DefaultValue="Security"/>
+          <bt:String id="Button.Label" DefaultValue="Preview safely"/>
+        </bt:ShortStrings>
+        <bt:LongStrings>
+          <bt:String id="Button.Tooltip" DefaultValue="Open the selected email's attachments as safe page images in an isolated cloud renderer. Nothing is opened on this PC."/>
+        </bt:LongStrings>
+      </Resources>
+    </VersionOverrides>
+  </VersionOverrides>
+</OfficeApp>

@@ -1,7 +1,7 @@
 # Pinned. Licenses: all permissive (BSD/MIT/Apache/HPND) so the repo can stay MIT.
 pypdfium2==4.30.0
-pypdf==5.1.0
-pillow==11.0.0
+pypdf==6.21.4
+pillow==13.0.0
 zxing-cpp==2.3.0
 phonenumbers==8.13.50
 oletools==0.60.2

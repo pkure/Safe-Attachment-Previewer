@@ -6,7 +6,7 @@ FROM debian:bookworm-slim AS deps
 RUN apt-get update && apt-get install -y --no-install-recommends python3 python3-venv python3-dev g++ cmake make \
  && rm -rf /var/lib/apt/lists/*
 COPY requirements.txt requirements-dev.txt /app/
-RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt -r /app/requirements-dev.txt
+RUN python3 -m venv /opt/venv && /opt/venv/bin/pip install --no-cache-dir --upgrade pip==26.3 setuptools==84.2.1 && /opt/venv/bin/pip install --no-cache-dir -r /app/requirements.txt -r /app/requirements-dev.txt
 
 # Stage 2: runtime.
 FROM debian:bookworm-slim

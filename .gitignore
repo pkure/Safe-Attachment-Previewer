@@ -14,3 +14,7 @@ __pycache__/
 *.pyc
 .DS_Store
 .pytest_cache/
+infra/.terraform/
+infra/tfplan
+infra/terraform.tfvars
+infra/backend.hcl

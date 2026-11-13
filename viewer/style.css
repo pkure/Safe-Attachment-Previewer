@@ -110,3 +110,15 @@ pre.pagetext, pre.code { white-space: pre-wrap; word-break: break-word; backgrou
   header { padding: 10px 16px; }
   #search { min-width: 0; width: 100%; }
 }
+
+/* Cloud mode: live progress until the report is ready. */
+body.waiting main, body.waiting #top { display: none; }
+#progress { max-width: 560px; margin: 8vh auto; padding: 24px 28px; background: #fff; border: 1px solid #d8dee4; border-radius: 10px; }
+#progress h1 { font-size: 20px; margin: 0 0 4px; }
+#p-steps { padding-left: 22px; margin: 16px 0; }
+#p-steps li { padding: 4px 0; color: #8b949e; }
+#p-steps li.ok { color: #1a7f37; }
+#p-steps li.ok::marker { content: "✓  "; }
+#p-steps li.now { color: #1b1f24; font-weight: 600; }
+#p-steps li.now::after { content: " …"; }
+#progress .small { font-size: 12.5px; }
