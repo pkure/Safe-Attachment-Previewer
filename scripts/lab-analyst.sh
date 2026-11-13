@@ -12,7 +12,7 @@ G=https://graph.microsoft.com/v1.0
 if az rest --method get --url "$G/users/$UPN" --query id -o tsv >/dev/null 2>&1; then
   echo "$UPN already exists"
 else
-  PW="$(LC_ALL=C tr -dc 'A-Za-z0-9' </dev/urandom | head -c 16)!a9"
+  PW="$(openssl rand -base64 18 | tr -d "/+=")!a9"
   security add-generic-password -U -a analyst1 -s "$DOMAIN analyst1 (temp)" -w "$PW"
   body=$(printf '{"accountEnabled":true,"displayName":"Analyst One (lab)","mailNickname":"analyst1","userPrincipalName":"%s","usageLocation":"US","passwordProfile":{"forceChangePasswordNextSignIn":true,"password":"%s"}}' "$UPN" "$PW")
   unset PW
