@@ -23,3 +23,13 @@ output "log_workspace" {
 output "render_job" {
   value = azurerm_container_app_job.render.name
 }
+
+output "analyst_pc" {
+  description = "Connect: Azure portal > vm-analyst > Connect > Bastion. Local admin 'labadmin' (password: scripts/cloud.sh vm-password)."
+  value       = var.analyst_pc ? azurerm_windows_virtual_machine.analyst[0].name : "not created"
+}
+
+output "vm_admin_password" {
+  value     = random_password.vm.result
+  sensitive = true
+}

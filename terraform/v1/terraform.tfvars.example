@@ -1,0 +1,7 @@
+# Copy to terraform.tfvars (gitignored) and fill in.
+tenant_id       = "00000000-0000-0000-0000-000000000000"
+subscription_id = "00000000-0000-0000-0000-000000000000"
+domain          = "contoso.onmicrosoft.com"
+# location    = "eastus2"
+# ttl_hours   = 8
+# bastion_sku = "Developer"   # or "Basic" where Developer is not offered

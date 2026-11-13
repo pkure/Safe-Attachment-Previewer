@@ -4,5 +4,5 @@ subscription_id      = "00000000-0000-0000-0000-000000000000"
 resource_group_name  = "rg-tfstate"
 storage_account_name = "sttfstatexxxxxx"
 container_name       = "tfstate"
-key                  = "attachment-sandbox/cloud-v2.tfstate"
+key                  = "attachment-sandbox/terraform.tfstate"
 use_azuread_auth     = true
