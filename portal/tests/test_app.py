@@ -226,6 +226,7 @@ def test_security_headers(mod):
     assert "frame-ancestors 'none'" in v and "script-src 'self';" in v
     a = c.get("/addin/taskpane.html").headers["Content-Security-Policy"]
     assert "https://outlook.office.com" in a and "appsforoffice.microsoft.com" in a
+    assert "https://ajax.aspnetcdn.com" in a  # classic Outlook: office.js loads MicrosoftAjax.js from here
 
 
 def test_manifest_is_valid_and_points_at_portal(mod):
