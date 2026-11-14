@@ -27,14 +27,44 @@ function say(text, cls) {
 	$("msg").className = cls || "";
 }
 
-function call(fn) {
-	return new Promise((resolve, reject) =>
-		fn((r) =>
+// Small step log at the bottom of the pane, so a stall can be read off the screen and reported.
+const traceLines = [];
+function trace(text) {
+	traceLines.push(`${new Date().toISOString().slice(11, 19)} ${text}`);
+	if (traceLines.length > 12) traceLines.shift();
+	const d = $("diag");
+	if (d) d.textContent = traceLines.join("\n"); // the script runs in <head>: early lines show on the next call
+}
+document.addEventListener("DOMContentLoaded", () => trace("pane loaded"));
+
+window.addEventListener("error", (e) => {
+	trace(`error: ${e.message}`);
+	say(`Something went wrong in the add-in: ${e.message}`, "err");
+});
+window.addEventListener("unhandledrejection", (e) =>
+	trace(`error: ${(e.reason && (e.reason.message || e.reason.code)) || e.reason}`),
+);
+document.addEventListener("securitypolicyviolation", (e) =>
+	trace(`blocked by page policy: ${e.violatedDirective} ${e.blockedURI}`),
+);
+setTimeout(() => {
+	if (!cfg) {
+		trace("Outlook's add-in library did not start within 15 s");
+		say("Outlook didn't start the add-in. Close this pane and try again.", "err");
+	}
+}, 15000);
+
+// Outlook calls that never answer must not freeze the pane: give up after a few seconds.
+function call(fn, ms = 8000) {
+	return new Promise((resolve, reject) => {
+		const timer = setTimeout(() => reject(new Error("no answer from Outlook")), ms);
+		fn((r) => {
+			clearTimeout(timer);
 			r.status === Office.AsyncResultStatus.Succeeded
 				? resolve(r.value)
-				: reject(r.error),
-		),
-	);
+				: reject(r.error);
+		});
+	});
 }
 
 function toRest(ewsId) {
@@ -65,18 +95,22 @@ async function readSelection(auto) {
 		Office.context.requirements.isSetSupported("Mailbox", "1.13") &&
 		typeof mbx.getSelectedItemsAsync === "function"
 	) {
+		trace("asking Outlook for the selected emails");
 		try {
 			items = (await call((cb) => mbx.getSelectedItemsAsync(cb))).map((i) => ({
 				ewsId: i.itemId,
 				subject: i.subject,
 			}));
+			trace(`${items.length} selected`);
 		} catch (e) {
+			trace(`selection failed: ${e.message || e.code || e}`);
 			items = [];
 		}
 	}
 	if (!items.length && mbx.item)
 		items = [{ ewsId: mbx.item.itemId, subject: mbx.item.subject }];
 
+	trace("checking which mailbox each email is in");
 	if (items.length === 1 && mbx.item && items[0].ewsId === mbx.item.itemId) {
 		items[0].mailbox = await sharedOwner(mbx.item);
 	} else if (
@@ -93,6 +127,7 @@ async function readSelection(auto) {
 			}
 		}
 	}
+	trace("selection ready");
 	selection = items
 		.slice(0, cfg.maxItems)
 		.map((it) => ({ ...it, id: toRest(it.ewsId) }));
@@ -258,7 +293,9 @@ async function poll() {
 	if (pending.length) setTimeout(poll, 2000);
 }
 
-Office.onReady(async () => {
+trace("waiting for Outlook");
+Office.onReady(async (info) => {
+	trace(`Outlook ready (${(info && info.host) || "no host"}, ${(info && info.platform) || "?"})`);
 	try {
 		cfg = await (await fetch("config.json", { cache: "no-store" })).json();
 	} catch (e) {
@@ -276,5 +313,10 @@ Office.onReady(async () => {
 			/* older Outlook: single item only */
 		}
 	}
-	await readSelection(true);
+	try {
+		await readSelection(true);
+	} catch (e) {
+		trace(`error: ${e.message || e}`);
+		say("Couldn't read the selected emails. Close this pane and try again.", "err");
+	}
 });
