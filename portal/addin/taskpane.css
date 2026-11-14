@@ -17,3 +17,6 @@ a { color: var(--brand); font-weight: 600; }
 .s-failed, .err { color: var(--err); }
 .ok { color: var(--ok); } .warn { color: var(--warn); }
 #msg { min-height: 1.4em; }
+
+#diag-wrap { margin-top: 1rem; font-size: 11px; color: #666; }
+#diag { white-space: pre-wrap; margin: .25rem 0 0; }
