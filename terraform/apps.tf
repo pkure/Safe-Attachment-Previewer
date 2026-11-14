@@ -6,6 +6,7 @@ resource "azurerm_container_app_job" "render" {
   resource_group_name          = azurerm_resource_group.lab.name
   location                     = var.location
   container_app_environment_id = azurerm_container_app_environment.env.id
+  workload_profile_name        = "Consumption"
   replica_timeout_in_seconds   = 900
   replica_retry_limit          = 0 # a failed case is reported, never silently re-run
   tags                         = local.tags
@@ -62,6 +63,7 @@ resource "azurerm_container_app" "portal" {
   name                         = "ca-sap-portal"
   resource_group_name          = azurerm_resource_group.lab.name
   container_app_environment_id = azurerm_container_app_environment.env.id
+  workload_profile_name        = "Consumption"
   revision_mode                = "Single"
   tags                         = local.tags
 
