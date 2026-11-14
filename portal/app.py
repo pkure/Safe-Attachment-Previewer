@@ -565,7 +565,7 @@ def headers(resp):
     if request.path.startswith("/addin/"):
         # Runs inside Outlook (a webview, or an iframe in Outlook on the web). Office.js comes from Microsoft's CDN.
         resp.headers["Content-Security-Policy"] = (
-            "default-src 'self'; script-src 'self' https://appsforoffice.microsoft.com; style-src 'self' 'unsafe-inline'; "
+            "default-src 'self'; script-src 'self' https://appsforoffice.microsoft.com https://ajax.aspnetcdn.com; style-src 'self' 'unsafe-inline'; "
             "img-src 'self' data:; connect-src 'self' https://login.microsoftonline.com; object-src 'none'; "
             f"base-uri 'none'; frame-ancestors {OFFICE_FRAMES}")
     else:
