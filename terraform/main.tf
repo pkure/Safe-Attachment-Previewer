@@ -111,7 +111,12 @@ resource "azurerm_container_app_environment" "env" {
   location                   = var.location
   logs_destination           = "log-analytics"
   log_analytics_workspace_id = azurerm_log_analytics_workspace.logs.id
-  tags                       = local.tags
+  # Azure attaches the pay-per-use Consumption profile itself; declaring it keeps plans clean (no added cost).
+  workload_profile {
+    name                  = "Consumption"
+    workload_profile_type = "Consumption"
+  }
+  tags = local.tags
 }
 
 # ---------------------------------------------------------------- identities (one per workload, least privilege)
