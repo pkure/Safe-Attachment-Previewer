@@ -29,6 +29,7 @@ import pypdfium2.raw as pdfium_c
 import zxingcpp
 from PIL import Image, ImageOps
 
+from . import deep as D
 from . import extract as X
 from . import formats as F
 
@@ -40,8 +41,22 @@ CASE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$")
 PDF_KEYWORDS = [b"/JavaScript", b"/JS", b"/OpenAction", b"/AA", b"/Launch", b"/EmbeddedFile", b"/XFA", b"/RichMedia",
                 b"/SubmitForm", b"/ImportData"]
 PDF_HOT = {"/JavaScript", "/JS", "/Launch", "/EmbeddedFile", "/SubmitForm", "/ImportData"}
+# Found only after decompressing = deliberately hidden from simple scanners. These are worth calling out.
+PDF_HIDDEN_WATCH = PDF_HOT | {"/OpenAction", "/AA", "/XFA", "/RichMedia", "/GoToR", "/GoToE"}
+# Text formats whose content should never be a binary file type. Real 2026-11-18 sample: a PDF named "*.ics".
+TEXTY_EXT = {".ics", ".ical", ".vcs", ".vcf", ".txt", ".csv", ".eml", ".htm", ".html", ".xml", ".json", ".svg",
+             ".log", ".md"}
+BINARY_KINDS = {"pdf", "pe", "zip", "ole", "rtf", "image", "lnk", "onenote", "7z", "rar", "gzip", "bzip2", "xz",
+                "cab", "iso", "vhd", "vhdx", "dmg"}
+# Zero-width and tag characters: invisible, so "Re\u200bmin\u200bder" reads as "Reminder" but filters don't match it.
+INVISIBLE = re.compile("[\u00ad\u034f\u061c\u115f\u1160\u17b4\u17b5\u180e\u200b-\u200f\u202a-\u202e"
+                       "\u2060-\u2064\u206a-\u206f\u3164\ufeff\uffa0\U000e0000-\U000e007f\U000e0100-\U000e01ef]")
+PDF_KEYWORDS_STR = {k.decode() for k in PDF_KEYWORDS}
 KIND_LABEL = {"pe": "a Windows executable", "ole": "a legacy Office/OLE file", "zip": "a zip archive",
-              "rtf": "RTF", "image": "an image", "other": "unknown data"}
+              "rtf": "RTF", "image": "an image", "other": "unknown data", "7z": "a 7-Zip archive", "rar": "a RAR archive",
+              "gzip": "gzip data", "bzip2": "bzip2 data", "xz": "xz data", "cab": "a CAB archive", "tar": "a tar archive",
+              "iso": "a disk image (ISO)", "vhd": "a virtual disk (VHD)", "vhdx": "a virtual disk (VHDX)",
+              "dmg": "a Mac disk image", "pdf": "a PDF", "lnk": "a Windows shortcut", "onenote": "a OneNote file"}
 DOMAINISH = re.compile(r"(?i)\b(?:[a-z0-9-]+\.)+[a-z]{2,}\b")
 
 
@@ -112,7 +127,21 @@ def host_flags(f: dict, host: str, page: int | None, what: str) -> None:
         flag(f, "medium", f"{what} domain {X.defang(host)} uses punycode (look-alike characters possible)", page)
 
 
+def proto_flags(f: dict, text: str, page: int | None = None) -> None:
+    """Links that start a Windows program (ms-msdt: = Follina, search-ms:, ...) or leak the login hash (file://, UNC)."""
+    seen = f.setdefault("_proto", set())
+    for hit in X.protocol_hits(text):
+        if hit.lower() in seen:
+            continue
+        seen.add(hit.lower())
+        leak = hit.lower().startswith("file:") or hit.startswith("\\\\")
+        flag(f, "medium" if leak else "high",
+             (f"link to a network file share ({hit[:120]}): opening it can send your Windows login hash" if leak else
+              f"link starts a Windows program instead of a web page: {hit[:160]}"), page)
+
+
 def scan_text(f: dict, text: str, page: int | None, source: str) -> None:
+    proto_flags(f, text, page)
     for u in X.find_urls(text, ocr=source == "ocr"):
         add_link(f, u, page, source)
     for e in X.find_emails(text):
@@ -138,11 +167,31 @@ def save_page(case: Case, f: dict, n: int, img: Image.Image) -> dict:
     return page
 
 
-def decode_qr(f: dict, page: dict, img: Image.Image) -> None:
+def _qr_variants(img: Image.Image):
+    """Codes attackers make hard to read: light-on-dark (inverted), tinted/low-contrast, or tiny."""
+    g = img.convert("L")
+    yield g, {"binarizer": zxingcpp.Binarizer.GlobalHistogram}
+    yield ImageOps.invert(g), {}
+    yield ImageOps.autocontrast(g, cutoff=2).point(lambda v: 255 if v > 128 else 0), {}
+    if max(g.size) <= 3000:
+        yield g.resize((g.width * 2, g.height * 2), Image.NEAREST), {}
+
+
+def decode_qr(f: dict, page: dict, img: Image.Image, thorough: bool = False) -> None:
     try:
         results = zxingcpp.read_barcodes(img)
     except Exception:
         return
+    if not results and thorough:
+        for variant, kw in _qr_variants(img):
+            try:
+                results = zxingcpp.read_barcodes(variant, **kw)
+            except Exception:
+                continue
+            if results:
+                f["notes"].append("QR code only readable after image clean-up (inverted or low-contrast code)")
+                img = variant  # positions below are in this variant's pixels
+                break
     for r in results:
         p = r.position
         xs, ys = [p.top_left.x, p.top_right.x, p.bottom_left.x, p.bottom_right.x], \
@@ -259,7 +308,7 @@ def render_pdf(case: Case, f: dict, path: Path) -> None:
             norm = [rect[0] / w, 1 - rect[3] / h, (rect[2] - rect[0]) / w, (rect[3] - rect[1]) / h] if rect else None
             add_link(f, uri, i + 1, "link", anchor, norm)
         has_images = bool(list(pg.get_objects(filter=[pdfium_c.FPDF_PAGEOBJ_IMAGE], max_depth=2)))
-        decode_qr(f, page, img)
+        decode_qr(f, page, img, thorough=has_images)
         if has_images or page["chars"] < OCR_MIN_CHARS:
             ocr_jobs.append(page)
         tp.close()
@@ -301,7 +350,7 @@ def render_image(case: Case, f: dict, path: Path) -> None:
         f["notes"].append(f"showing frame 1 of {frames}")
     f["pageCount"] = 1
     page = save_page(case, f, 1, img)
-    decode_qr(f, page, img)
+    decode_qr(f, page, img, thorough=True)
     run_ocr(case, f, [page])
 
 
@@ -312,27 +361,58 @@ def process(case: Case, path: Path, name: str, parent: str | None, depth: int, w
     kind = f["kind"]
     if ext in F.EXEC_EXT or kind == "pe":
         flag(f, "high", "executable file (Windows PE)" if kind == "pe" else f"executable or script file type ({ext})")
-        if kind == "pe" or not looks_like_text(path):
+        if kind == "pe" or (kind not in ("lnk", "onenote") and not looks_like_text(path)):
             # Never executed, never rendered. This is what the paid sandbox (e.g. CrowdStrike) is for.
             f["escalate"] = "Executable file: can't be previewed safely. Don't open it. Escalate manually per your process."
     expected = {".pdf": {"pdf"}, **{e: {"image"} for e in F.IMAGE_EXT},
-                **{e: {"ole", "zip", "rtf"} for e in F.OFFICE_EXT}, ".zip": {"zip"}}.get(ext)
+                **{e: {"ole", "zip", "rtf"} for e in F.OFFICE_EXT}, ".zip": {"zip"}, ".7z": {"7z"}, ".rar": {"rar"},
+                ".gz": {"gzip"}, ".tgz": {"gzip"}, ".cab": {"cab"}, ".iso": {"iso"}, ".vhd": {"vhd"},
+                ".vhdx": {"vhdx"}}.get(ext)
+    if expected is None and ext in TEXTY_EXT and kind in BINARY_KINDS:
+        expected = {"text"}  # a calendar invite / text file whose bytes are really a PDF, archive, program...
     if expected and kind not in expected:
         flag(f, "high", f"file is not what its name says: named {ext}, content is {KIND_LABEL.get(kind, kind)}")
         if kind == "pe":
             f["escalate"] = "Disguised executable: can't be previewed safely. Don't open it. Escalate manually per your process."
-    if kind == "zip" and not F.is_ooxml_or_odf(path):
+    is_zip = kind == "zip" and not F.is_ooxml_or_odf(path)
+    if is_zip or kind in F.ARCHIVE_KINDS or (kind == "other" and ext in F.DISK_EXT):
+        if kind in F.DISK_KINDS or ext in F.DISK_EXT:
+            flag(f, "high", f"disk image ({KIND_LABEL.get(kind, ext)}): files inside skip Windows' 'downloaded from "
+                            "the internet' warnings, a common malware delivery trick")
         if depth >= F.LIMITS["zip_depth"]:
             f["notes"].append("nested archive not unpacked (depth limit)")
             return
-        kids, encrypted, notes = F.unpack_zip(path, work / f"{f['id']}_unzipped", budget)
-        f["notes"] += notes
-        if encrypted:
-            flag(f, "medium", f"password-protected archive entries ({len(encrypted)}): AV can't see inside")
-        for k in kids:
-            child_name = k.name.split("-", 1)[1]
-            f["children"].append(f"f{len(case.files) + 1}")
-            process(case, k, child_name, f["id"], depth + 1, work, budget)
+        dest = work / f"{f['id']}_unpacked"
+        if is_zip and not F.zip_encrypted(path):  # the well-tested in-process path for plain zips
+            kids, _, notes = F.unpack_zip(path, dest, budget)
+            r = {"files": [(k, k.name.split("-", 1)[1]) for k in kids], "encrypted": False, "password": None,
+                 "notes": notes}
+        else:
+            r = F.unpack_archive(path, dest, budget, "zip" if is_zip else kind, passwords(budget))
+        f["notes"] += r["notes"]
+        password_flag(f, r["encrypted"], r["password"], budget, "archive")
+        process_children(case, f, r["files"], depth, work, budget)
+        return
+    if kind == "ole" and (ext == ".msg" or F.is_msg(path)):
+        eml = F.msg_to_eml(path, work / f"{f['id']}_msg")
+        if eml is None:
+            f["notes"].append("Outlook .msg could not be read")
+            return
+        if depth >= F.LIMITS["zip_depth"] + 1:
+            f["notes"].append("nested email not unpacked (depth limit)")
+            return
+        email_file(case, f, eml, depth, work, budget)
+        return
+    if kind == "lnk":
+        shortcut(f, path)
+        return
+    if kind == "onenote":
+        files = F.onenote_files(path)
+        if files:
+            flag(f, "high", f"OneNote file carries {len(files)} embedded file(s): "
+                 + ", ".join(n for n, _ in files[:5]) + ". A 'double-click to view' button over a hidden file is a "
+                 "known malware trick")
+        add_children(case, f, files, depth, work, budget, "embedded files")
         return
     if ext in F.EMAIL_EXT or (kind == "other" and ext not in F.HTML_EXT and F.looks_like_email(path)):
         if depth >= F.LIMITS["zip_depth"] + 1:
@@ -340,9 +420,11 @@ def process(case: Case, path: Path, name: str, parent: str | None, depth: int, w
             return
         email_file(case, f, path, depth, work, budget)
     elif kind == "pdf":
+        path = unlock_pdf(f, path, work, budget)
         render_pdf(case, f, path)
+        pdf_depth(case, f, path, depth, work, budget)
     elif kind in ("ole", "rtf", "zip") or ext in F.OFFICE_EXT:
-        office(case, f, path, work)
+        office(case, f, path, work, depth, budget)
     elif kind == "image":
         render_image(case, f, path)
     elif ext in F.TEXT_EXT or looks_like_text(path):
@@ -356,6 +438,9 @@ def process(case: Case, path: Path, name: str, parent: str | None, depth: int, w
             flag(f, "medium", "HTML attachment (a common credential-phishing and HTML-smuggling format)")
             if any(k.startswith(("password", "base64", "atob")) for k in signals):
                 flag(f, "high", "HTML contains " + ", ".join(signals))
+        text_depth(case, f, path, depth, work, budget)
+        if is_html and ext != ".svg":  # SVG is all <svg>: nothing left to draw once made safe
+            render_converted(case, f, path, work, html=True)  # a picture of the page: QR codes drawn as tables, OCR
     else:
         f["notes"].append("no safe preview for this file type; hash and AV only")
 
@@ -388,6 +473,11 @@ def email_file(case: Case, f: dict, path: Path, depth: int, work: Path, budget: 
     add_html_links(f, m["hrefs"], m["anchors"])
     scan_text(f, m["scan"], None, "text")
 
+    for hdr in ("Subject", "From"):
+        n = len(INVISIBLE.findall(h.get(hdr, "")))
+        if n:
+            flag(f, "medium", f"{n} invisible character(s) hidden in the {hdr.lower()} line: they break up words so spam "
+                              "filters don't recognize them")
     reply = parseaddr(h.get("Reply-To", ""))[1]
     reply_dom = reply.rsplit("@", 1)[-1].lower() if "@" in reply else ""
     if sender:
@@ -401,13 +491,49 @@ def email_file(case: Case, f: dict, path: Path, depth: int, work: Path, budget: 
     failed = [k.upper() for k in ("spf", "dkim", "dmarc") if re.search(rf"\b{k}=(fail|softfail|permerror)", auth)]
     if failed:
         flag(f, "high", "sender authentication failed: " + ", ".join(failed))
-    for child, child_name in m["files"]:
-        f["children"].append(f"f{len(case.files) + 1}")
-        process(case, child, child_name, f["id"], depth + 1, work, budget)
+    # Passwords mentioned in the email unlock its attachments (and anything nested inside them).
+    found = X.password_candidates(h.get("Subject", "") + "\n" + m["scan"])
+    budget["passwords"] = found + [pw for pw in budget.get("passwords", []) if pw not in found]
+    first_kid = len(case.files)
+    process_children(case, f, m["files"], depth, work, budget)
+    by_hash: dict[str, list[str]] = {}
+    empty = []
+    for kid in case.files[first_kid:]:
+        if kid["parent"] == f["id"]:
+            by_hash.setdefault(kid["sha256"], []).append(kid["name"])
+            if kid["size"] == 0:
+                empty.append(kid["name"])
+    if empty:  # real 2026-11-18 phish: "Regulations", "E-Doc", "User Agreement", all 0 bytes
+        flag(f, "medium", f"{len(empty)} empty (0-byte) attachment(s): " + ", ".join(F.safe_name(n) for n in empty[:5])
+             + ". Decoys that make the email look official while giving filters nothing to scan")
+    for names in by_hash.values():
+        if len({Path(n).suffix.lower() for n in names}) > 1:
+            flag(f, "medium", f"the same file is attached {len(names)} times under different names ("
+                 + ", ".join(F.safe_name(n) for n in names[:4]) + "): a trick to get past filters that block by file type")
 
 
-def office(case: Case, f: dict, path: Path, work: Path) -> None:
+def shortcut(f: dict, path: Path) -> None:
+    info = F.lnk_info(path)
+    f["shortcut"] = info
+    if "error" in info:
+        f["notes"].append(f"shortcut could not be parsed ({info['error']})")
+        return
+    cmd = f"{info['target']} {info['arguments']}".strip()
+    f["text"] = "\n".join(f"{k}: {v}" for k, v in info.items() if v)
+    risky = sorted({m.group(1).lower() for m in F.LNK_RISKY.finditer(cmd)})
+    flag(f, "high", f"shortcut runs: {cmd[:300] or '(no target)'}"
+         + (f" (uses {', '.join(risky)})" if risky else ""))
+    scan_text(f, cmd, None, "text")
+    hidden = add_decoded(f, cmd, None, "shortcut")
+    if hidden:
+        flag(f, "high", "shortcut's command hides link(s) in encoded text: " + ", ".join(X.defang(u) for u in hidden[:3]))
+    f.pop("_blobs", None)
+
+
+def office(case: Case, f: dict, path: Path, work: Path, depth: int, budget: dict) -> None:
     m = F.macros(path)
+    if m and m.get("xlm"):
+        flag(f, "high", "Excel 4.0 (XLM) macros: an old macro type attackers still use because it isn't VBA")
     if m:
         f["macros"] = m
         auto = [x["keyword"] for x in m["findings"] if x["type"] == "AutoExec"]
@@ -416,12 +542,34 @@ def office(case: Case, f: dict, path: Path, work: Path) -> None:
              + (f"; auto-run: {', '.join(auto)}" if auto else "") + (f"; suspicious: {', '.join(sus)}" if sus else ""))
         for mod in m["modules"]:
             scan_text(f, mod["code"], None, "macro")
+    dde = F.dde_fields(path)
+    if dde:
+        f["dde"] = dde[:5000]
+        flag(f, "high", f"DDE field starts a program when the document opens: {dde.splitlines()[0][:200]}")
+        scan_text(f, dde, None, "dde")
+    packages = F.ole_packages(path)
+    if packages:
+        flag(f, "high", f"document carries {len(packages)} embedded file(s) (an icon you double-click): "
+             + ", ".join(F.safe_name(n) for n, _ in packages[:5]))
+    add_children(case, f, packages, depth, work, budget, "embedded files")
     for rel in F.ooxml_relationships(path):
+        proto_flags(f, rel["target"])
         if rel["kind"] == "hyperlink":
             add_link(f, rel["target"], None, "embedded")
         elif rel["kind"] in ("attachedTemplate", "oleObject", "frame", "subDocument"):
             flag(f, "high", f"remote {rel['kind']} loads {X.defang(rel['target'])} (template injection)")
-    pdf, err = F.office_to_pdf(path, work / f"{f['id']}_office")
+    render_converted(case, f, path, work)
+
+
+def render_converted(case: Case, f: dict, path: Path, work: Path, html: bool = False) -> None:
+    """Render a document LibreOffice can open (Office, RTF, HTML) by converting it to PDF first."""
+    if html:
+        clean, removed = F.html_for_render(path.read_bytes()[: F.LIMITS["max_text_bytes"]].decode("utf-8", "replace"))
+        if removed:
+            f["notes"].append(f"page drawn without {removed} script/frame/external resource reference(s)")
+        path = work / f"{f['id']}_render.html"
+        path.write_text(clean)
+    pdf, err = F.office_to_pdf(path, work / f"{f['id']}_office", html)
     if err:
         f["notes"].append(err)
         return
@@ -433,6 +581,151 @@ def office(case: Case, f: dict, path: Path, work: Path) -> None:
     located = {link["url"].lower() for link in f["links"] if link["page"] is not None}
     f["links"] = [link for link in f["links"] if link["page"] is not None or link["url"].lower() not in located
                   or link["url"].lower() not in page_links_before]
+
+
+# ---------------------------------------------------------------- depth (deep.py): below the first layer
+def add_children(case: Case, f: dict, items: list[tuple[str, bytes]], depth: int, work: Path, budget: dict,
+                 what: str) -> None:
+    """Files found INSIDE a file (PDF attachments, smuggled payloads) go through the same pipeline, recursively."""
+    if not items:
+        return
+    if depth >= F.LIMITS["zip_depth"] + 1:
+        f["notes"].append(f"{what} not unpacked (depth limit)")
+        return
+    dest = work / f"{f['id']}_{what.replace(' ', '_')}"
+    dest.mkdir(parents=True, exist_ok=True)
+    for i, (name, data) in enumerate(items, 1):
+        if budget["files"] >= F.LIMITS["max_files"] or budget["bytes"] + len(data) > F.LIMITS["max_total_bytes"]:
+            f["notes"].append(f"skipped {F.safe_name(name)}: file/size limit")
+            continue
+        p = dest / f"{i:02d}-{F.safe_name(name)}"
+        p.write_bytes(data)
+        budget["files"] += 1
+        budget["bytes"] += len(data)
+        process_children(case, f, [(p, name)], depth, work, budget)
+
+
+def process_children(case: Case, f: dict, files: list[tuple[Path, str]], depth: int, work: Path, budget: dict) -> None:
+    for p, name in files:
+        f["children"].append(f"f{len(case.files) + 1}")
+        process(case, p, name, f["id"], depth + 1, work, budget)
+
+
+def passwords(budget: dict) -> list[str]:
+    found = budget.get("passwords", [])
+    return found + [pw for pw in X.COMMON_PASSWORDS if pw not in found]
+
+
+def password_flag(f: dict, encrypted: bool, pw: str | None, budget: dict, what: str) -> None:
+    if pw:
+        where = "found in the email" if pw in budget.get("passwords", []) else "a common one"
+        flag(f, "high", f"password-protected {what}, opened with the password '{pw[:40]}' ({where}). Locking a file "
+                        "hides it from email filters and antivirus")
+    elif encrypted:
+        flag(f, "medium", f"password-protected {what}: no password in the email opened it, so its contents weren't "
+                          "checked (antivirus can't see inside either)")
+
+
+def unlock_pdf(f: dict, path: Path, work: Path, budget: dict) -> Path:
+    """A PDF with an open password: try the email's passwords; on success, work on a decrypted copy."""
+    try:
+        reader = pypdf.PdfReader(str(path), strict=False)
+        if not reader.is_encrypted or reader.decrypt(""):
+            return path  # not locked, or only an owner (permissions) password
+    except Exception:
+        return path
+    for pw in passwords(budget)[: F.LIMITS["max_passwords"]]:
+        try:
+            if reader.decrypt(pw):
+                out = work / f"{f['id']}_unlocked.pdf"
+                with open(out, "wb") as fh:
+                    pypdf.PdfWriter(clone_from=reader).write(fh)
+                f["_also"] = [str(out)]
+                password_flag(f, True, pw, budget, "PDF")
+                return out
+        except Exception:
+            continue
+    password_flag(f, True, None, budget, "PDF")
+    return path
+
+
+def add_decoded(f: dict, code: str, page: int | None, source: str) -> list[str]:
+    """Links in script text: plain ones, and ones that only appear after decoding (returned)."""
+    proto_flags(f, code, page)
+    d = D.deobfuscate(code)
+    known = {link["url"].lower() for link in f["links"]}
+    hidden = []
+    for u, layer in d["urls"]:
+        if u.lower() in known:
+            continue
+        add_link(f, u, page, "decoded" if layer else source)
+        if layer:
+            hidden.append(u)
+    f["_blobs"] = f.get("_blobs", []) + d["blobs"]
+    if d["truncated"]:
+        flag(f, "medium", f"encoding nested deeper than {D.LIMITS['layers']} layers or too large to finish decoding "
+                          "(stopped; heavy obfuscation is itself a red flag)", page)
+    return hidden
+
+
+def pdf_depth(case: Case, f: dict, path: Path, depth: int, work: Path, budget: dict) -> None:
+    d = D.pdf_inspect(path)
+    f["notes"] += d["notes"]
+    raw = f["pdfActive"] or {}
+    deep = {k: v for k, v in d["keywords"].items() if k in PDF_KEYWORDS_STR or k in ("/GoToR", "/GoToE")}
+    hidden = sorted(k for k in deep if k in PDF_HIDDEN_WATCH and k not in raw)
+    if hidden:
+        flag(f, "high", "PDF hides active content inside compressed objects (a simple scan can't see it): "
+             + ", ".join(hidden))
+    f["pdfActive"] = {k: max(raw.get(k, 0), deep.get(k, 0)) for k in {**raw, **deep}}
+    hidden_links = []
+    for code in d["js"]:
+        f.setdefault("scripts", []).append({"source": "PDF JavaScript", "code": code[:20000]})
+        hidden_links += add_decoded(f, code, None, "pdf-js")
+    if d["js"] and not any("/JavaScript" in x["text"] or "/JS" in x["text"] for x in f["flags"]):
+        flag(f, "high", "PDF runs JavaScript")
+    if hidden_links:
+        flag(f, "high", "PDF JavaScript builds link(s) only visible after decoding: "
+             + ", ".join(X.defang(u) for u in hidden_links[:3]))
+    known = {link["url"].lower() for link in f["links"]}
+    for u in d["uris"]:
+        if u.lower() not in known:
+            add_link(f, u, None, "pdf-action")
+    for target in d["launch"]:
+        if not any(target[:200] in x["text"] for x in f["flags"] if x["text"].startswith("PDF Launch")):
+            flag(f, "high", f"PDF Launch action: {target[:200]}")
+    for target in d["submit"]:
+        flag(f, "high", f"PDF form sends what you type to {X.defang(target)}")
+        if X.find_urls(target):
+            add_link(f, target, None, "pdf-form")
+    for target in d["remote"]:
+        flag(f, "medium", f"PDF opens another file or site: {X.defang(target)}")
+        if X.find_urls(target):
+            add_link(f, target, None, "pdf-action")
+    for xml in d["xfa"]:
+        scan_text(f, xml, None, "xfa")
+    blobs = [(n, b) for n, b, _ in f.pop("_blobs", [])]
+    if d["files"]:
+        flag(f, "high", f"PDF carries {len(d['files'])} embedded file(s): "
+             + ", ".join(F.safe_name(n) for n, _ in d["files"][:5]))
+    add_children(case, f, d["files"], depth, work, budget, "embedded files")
+    if blobs:
+        flag(f, "high", "PDF JavaScript decodes file(s): " + ", ".join(F.safe_name(n) for n, _ in blobs[:5]))
+        add_children(case, f, blobs, depth, work, budget, "decoded files")
+
+
+def text_depth(case: Case, f: dict, path: Path, depth: int, work: Path, budget: dict) -> None:
+    """Scripts and HTML: decode layer by layer; links built at run time and smuggled files come out here."""
+    raw = path.read_bytes()[: F.LIMITS["max_text_bytes"]].decode("utf-8", "replace")
+    hidden = add_decoded(f, raw, None, "script")
+    if hidden:
+        flag(f, "medium", f"{len(hidden)} link(s) only visible after decoding: "
+             + ", ".join(X.defang(u) for u in hidden[:3]))
+    blobs = [(n, b) for n, b, _ in f.pop("_blobs", [])]
+    if blobs:
+        flag(f, "high", "builds file(s) from encoded data inside the page (HTML smuggling): "
+             + ", ".join(f"{F.safe_name(n)} ({len(b):,} bytes)" for n, b in blobs[:5]))
+        add_children(case, f, blobs, depth, work, budget, "decoded files")
 
 
 def looks_like_text(path: Path) -> bool:
@@ -487,7 +780,7 @@ def main() -> None:
     case.timing["av_s"] = round(time.monotonic() - t0, 2)
     for f in case.files:
         for path, sig in hits.items():
-            if path == f["_path"] or path.startswith(f["_path"] + "/"):
+            if path == f["_path"] or path.startswith(f["_path"] + "/") or path in f.get("_also", []):
                 f["av"] = sig
     pages = sum(len(f["pages"]) for f in case.files)
     attention = sum(1 for f in case.files for p in f["pages"]

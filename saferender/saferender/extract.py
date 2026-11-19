@@ -133,3 +133,42 @@ def base_domain(host: str) -> str:
     parts = (host or "").lower().rstrip(".").split(".")
     n = 3 if len(parts) >= 3 and ".".join(parts[-2:]) in _TWO_LEVEL else 2
     return ".".join(parts[-n:])
+
+
+# ---------------------------------------------------------------- passwords for locked attachments
+# Attackers lock a zip/PDF so email filters can't look inside, then put the password in the email ("Password: 4471").
+PW_WORD = r"(?:password|passcode|passwd|pwd|pass|pin|code|key|contrase(?:ñ|n)a|mot de passe|kennwort|senha|parola)"
+PW_RES = [
+    re.compile(rf"(?i)\b{PW_WORD}\b(?:\s+(?:is|for\s+\S+(?:\s+\S+)?))?\s*[:=\-]?\s*[\"'“‘«]?([^\s\"'”’»<>]{{3,40}})"),
+    re.compile(r"(?i)\buse\s+[\"'“‘]?([^\s\"'”’]{3,40}?)[\"'”’]?\s+to\s+(?:open|unlock|access|view)\b"),
+]
+PW_STOP = {"is", "the", "to", "for", "and", "your", "you", "below", "above", "attached", "required", "protected",
+           "here", "this", "that", "will", "with", "from", "please", "reset", "expired", "expires", "code", "number"}
+COMMON_PASSWORDS = ["infected", "malware", "virus", "1234", "12345", "123456", "0000", "1111", "password"]
+
+
+def password_candidates(text: str) -> list[str]:
+    """Passwords mentioned in an email, in order of appearance. Common sample-sharing passwords are tried separately."""
+    out = []
+    for rx in PW_RES:
+        for m in rx.finditer(text or ""):
+            raw = m.group(1)
+            core = raw.rstrip(".,;:!?)]")
+            if core.lower() in PW_STOP:
+                continue
+            for pw in (core, raw):  # "is 4471." ends a sentence; "Inv-2026!" is the password
+                if len(pw) >= 3 and pw not in out:
+                    out.append(pw)
+    return out
+
+
+# ---------------------------------------------------------------- protocol handlers
+# Links that open a Windows program instead of a web page. Follina (CVE-2022-30190) used ms-msdt:; search-ms: shows
+# an attacker's file share as if it were a local search; file:// and \\host\share leak the Windows login hash.
+PROTO_RE = re.compile(r"""(?i)(?<![\w-])((?:ms-msdt|search-ms|ms-officecmd|ms-appinstaller|ms-cxh(?:-full)?|ms-search|"""
+                      r"""ms-settings|ms-word:ofe\|u\||ms-excel:ofe\|u\||ms-powerpoint:ofe\|u\||mshta|vbscript)"""
+                      r""":[^\s"'<>]{0,300}|file://[^\s"'<>]{3,300}|\\\\[A-Za-z0-9.-]{3,}\\[^\s"'<>]{1,200})""")
+
+
+def protocol_hits(text: str) -> list[str]:
+    return list(dict.fromkeys(m.group(1) for m in PROTO_RE.finditer(text or "")))

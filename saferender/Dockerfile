@@ -19,6 +19,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       python3 python3-venv ca-certificates \
       libreoffice-writer-nogui libreoffice-calc-nogui libreoffice-impress-nogui \
       tesseract-ocr tesseract-ocr-eng fonts-dejavu-core fonts-liberation2 \
+      7zip libarchive-tools \
       $( [ "$WITH_AV" = 1 ] && echo clamav clamav-freshclam ) \
  && rm -rf /var/lib/apt/lists/*
 

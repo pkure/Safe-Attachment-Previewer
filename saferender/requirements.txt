@@ -5,3 +5,4 @@ pillow==11.0.0
 zxing-cpp==2.3.0
 phonenumbers==8.13.50
 oletools==0.60.2
+LnkParse3==1.5.0

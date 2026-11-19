@@ -172,3 +172,171 @@ def test_small_photo_is_upscaled_for_ocr(tmp_path):
     f = rep["files"][0]
     assert "50834" in f["pages"][0]["text"]
     assert any(p["number"] == "+17075550136" for p in f["phones"])
+
+
+# ---------------------------------------------------------------- depth (deep.py): hidden below the first layer
+def links_of(rep):
+    return {link["url"]: link for f in rep["files"] for link in f["links"]}
+
+
+def test_pdf_active_content_hidden_in_object_stream(tmp_path):
+    rep = run(tmp_path, "statement-objstm.pdf")
+    f = rep["files"][0]
+    t = flags(rep)
+    assert any("hides active content inside compressed objects" in x and "/JavaScript" in x for x in t), t
+    assert any("PDF form sends what you type to" in x and "objstm-form" in x for x in t), t
+    by_url = links_of(rep)
+    assert "decoded" in by_url["https://objstm-hidden.example/pay"]["sources"], "JS link built from pieces"
+    assert "https://objstm-form.example/collect" in by_url
+    assert f["scripts"] and "launchURL" in f["scripts"][0]["code"]
+    assert f["pages"], "still renders"
+    assert rep["verdict"] == "SUSPICIOUS"
+
+
+def test_pdf_embedded_file_is_unpacked(tmp_path):
+    rep = run(tmp_path, "statement-embedded.pdf")
+    pdf = rep["files"][0]
+    kids = [f for f in rep["files"] if f["parent"] == pdf["id"]]
+    assert [k["name"] for k in kids] == ["invoice-details.html"]
+    assert any(link["url"] == "https://embedded-link.example/login" for link in kids[0]["links"])
+    assert any("embedded file" in x for x in flags(rep))
+
+
+def test_html_smuggling(tmp_path):
+    rep = run(tmp_path, "smuggle-invoice.html")
+    page = rep["files"][0]
+    t = flags(rep)
+    assert any("HTML smuggling" in x and "invoice-7731.zip" in x for x in t), t
+    by_name = {f["name"]: f for f in rep["files"]}
+    assert by_name["invoice-7731.zip"]["parent"] == page["id"]
+    assert any(link["url"] == "https://smuggled-zip.example/pay" for link in by_name["readme.txt"]["links"])
+    by_url = links_of(rep)
+    assert "decoded" in by_url["https://charcode-hidden.example/next"]["sources"]
+    assert "decoded" in by_url["https://reversed-hidden.example/next"]["sources"]
+    assert page["pages"], "the HTML is drawn as a page too"
+
+
+def test_qr_drawn_as_html_table(tmp_path):
+    rep = run(tmp_path, "qr-table.html")
+    assert any(q["text"] == "https://table-qr.example/scan" for f in rep["files"] for q in f["qr"])
+
+
+def test_inverted_qr(tmp_path):
+    rep = run(tmp_path, "qr-inverted.png")
+    assert rep["files"][0]["qr"][0]["text"] == "https://inverted-qr.example/scan"
+
+
+def test_plain_html_has_no_hidden_link_noise(tmp_path):
+    rep = run(tmp_path, "shared-document.html")
+    assert not any("only visible after decoding" in x or "builds file(s)" in x for x in flags(rep))
+
+
+def test_local_files_never_drawn_into_html_pages(tmp_path):
+    rep = run(tmp_path, "local-file-probe.html")
+    f = rep["files"][0]
+    assert f["pages"] and any("external resource" in n for n in f["notes"]), f["notes"]
+    from PIL import Image
+    img = Image.open(rep["_out"] / f["pages"][0]["image"]).convert("RGB")
+    # The Debian logo is red; the probe text is black. Any reddish pixel means the local image was drawn.
+    assert not any(r > 120 and g < 80 and b < 100 for r, g, b in img.getdata()), "local image leaked into the page"
+
+
+# ---------------------------------------------------------------- tier 2: archives, disk images, passwords
+def by_name(rep):
+    return {f["name"]: f for f in rep["files"]}
+
+
+def test_password_from_email_unlocks_attachments(tmp_path):
+    rep = run(tmp_path, "documents-locked.eml")
+    files = by_name(rep)
+    urls = {link["url"] for f in rep["files"] for link in f["links"]}
+    assert {"https://pw-aes-zip.example/pay", "https://pw-7z.example/pay", "https://pw-pdf.example/view"} <= urls, urls
+    assert {"pay-aes.html", "pay-7z.html"} <= set(files), "children of the locked archives"
+    for name in ("docs-aes.zip", "docs-hidden-names.7z", "statement-locked.pdf"):
+        assert any("opened with the password '4471' (found in the email)" in x["text"] for x in files[name]["flags"]), name
+    assert files["statement-locked.pdf"]["pages"], "the unlocked PDF is rendered"
+
+
+def test_unknown_password_is_reported(tmp_path):
+    rep = run(tmp_path, "locked-unknown.zip")
+    assert any("contents weren't checked" in x for x in flags(rep))
+    assert len(rep["files"]) == 1 and rep["verdict"] == "SUSPICIOUS"
+
+
+def test_iso_is_opened(tmp_path):
+    rep = run(tmp_path, "shipping-docs.iso")
+    iso = rep["files"][0]
+    assert iso["kind"] == "iso" and any("disk image" in x["text"] for x in iso["flags"])
+    assert any(link["url"] == "https://iso-inside.example/open" for f in rep["files"] for link in f["links"])
+
+
+def test_targz_two_layers(tmp_path):
+    rep = run(tmp_path, "report.tar.gz")
+    assert [f["kind"] for f in rep["files"]][:2] == ["gzip", "tar"]
+    assert any(link["url"] == "https://targz-inside.example/report" for f in rep["files"] for link in f["links"])
+
+
+def test_zip_iso_chain(tmp_path):
+    rep = run(tmp_path, "delivery.zip")
+    assert [f["kind"] for f in rep["files"]][:2] == ["zip", "iso"]
+    assert any(link["url"] == "https://chain-iso.example/next" for f in rep["files"] for link in f["links"])
+
+
+# ---------------------------------------------------------------- tier 2b: .msg, .lnk, OneNote, Office tricks
+def test_outlook_msg(tmp_path):
+    rep = run(tmp_path, "account-alert.msg")
+    msg = rep["files"][0]
+    assert msg["email"]["Subject"].startswith("Unusual sign-in"), msg.get("email")
+    t = flags(rep)
+    assert any("sender authentication failed" in x for x in t) and any("imitates microsoft" in x for x in t), t
+    urls = {link["url"] for f in rep["files"] for link in f["links"]}
+    assert {"https://msg-body.example/login", "https://msg-attach.example/pay"} <= urls, urls
+    assert [f["name"] for f in rep["files"] if f["parent"] == msg["id"]] == ["review.html"]
+
+
+def test_lnk_powershell_encoded(tmp_path):
+    rep = run(tmp_path, "Invoice-7731.pdf.lnk")
+    f = rep["files"][0]
+    assert f["kind"] == "lnk" and not f["escalate"]
+    t = flags(rep)
+    assert any("shortcut runs" in x and "powershell" in x for x in t), t
+    assert any(link["url"].startswith("https://lnk-payload.example/a.ps1") and "decoded" in link["sources"]
+               for link in f["links"]), f["links"]
+
+
+def test_office_embedded_package(tmp_path):
+    rep = run(tmp_path, "contract-embedded.docx")
+    doc = rep["files"][0]
+    kids = [f for f in rep["files"] if f["parent"] == doc["id"]]
+    assert [k["name"] for k in kids] == ["invoice.bat"], [k["name"] for k in kids]
+    assert any("embedded file" in x["text"] for x in doc["flags"])
+    assert any("olepkg-inside.example" in link["url"] for link in kids[0]["links"])
+
+
+def test_dde_field(tmp_path):
+    rep = run(tmp_path, "memo-dde.docx")
+    assert any("DDE field" in x and "cmd.exe" in x for x in flags(rep)), flags(rep)
+
+
+def test_protocol_handlers(tmp_path):
+    t = flags(run(tmp_path, "update-required.html"))
+    assert any("Windows program" in x and "ms-msdt:" in x for x in t), t
+    assert any("Windows program" in x and "search-ms:" in x for x in t), t
+
+
+def test_onenote_embedded_file(tmp_path):
+    rep = run(tmp_path, "shared-notes.one")
+    one = rep["files"][0]
+    assert one["kind"] == "onenote" and any("OneNote file carries 1 embedded" in x["text"] for x in one["flags"])
+    kid = [f for f in rep["files"] if f["parent"] == one["id"]][0]
+    assert kid["name"].endswith(".hta")
+    assert any(link["url"] == "https://onenote-hta.example/run" for link in kid["links"])
+
+
+def test_renamed_ics_duplicate_and_invisible_subject(tmp_path):
+    rep = run(tmp_path, "renamed-ics.eml")
+    t = flags(rep)
+    assert any("named .ics, content is a PDF" in x for x in t), t
+    assert any("same file is attached 2 times" in x for x in t), t
+    assert any("invisible character" in x and "subject" in x for x in t), t
+    assert any("1 empty (0-byte) attachment" in x for x in t), t

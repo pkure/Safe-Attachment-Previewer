@@ -66,3 +66,21 @@ def test_base_domain():
     assert X.base_domain("url8792.mail.example.com") == "example.com"
     assert X.base_domain("www.bbc.co.uk") == "bbc.co.uk"
     assert X.base_domain("www.dir.ca.gov") == "dir.ca.gov"
+
+
+def test_password_candidates():
+    from saferender.extract import password_candidates as pc
+    assert pc("Your documents are attached. The password is 4471.") == ["4471", "4471."]
+    assert "Inv-2026!" in pc("Password: Inv-2026!")
+    assert pc('Use "blue77" to open the file') == ["blue77"]
+    assert pc("PIN = 902211") == ["902211"]
+    assert pc("Password for the archive: x9Kq") == ["x9Kq"]
+    assert pc("Reset your password here. Your password expires soon.") == []
+
+
+def test_protocol_hits():
+    from saferender.extract import protocol_hits as ph
+    assert ph('x = "ms-msdt:/id PCWDiagnostic"')[0].startswith("ms-msdt:/id")
+    assert ph("open search-ms:query=a&crumb=x") == ["search-ms:query=a&crumb=x"]
+    assert ph(r"see \\evil.example\share\a.lnk") == [r"\\evil.example\share\a.lnk"]
+    assert ph("plain https://example.com and C:\\Windows\\x") == []
