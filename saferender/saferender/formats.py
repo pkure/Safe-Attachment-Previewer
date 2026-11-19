@@ -484,6 +484,11 @@ def macros(path: Path) -> dict | None:
         vp = VBA_Parser(str(path))
     except Exception:  # not an Office container olevba understands
         return None
+    if getattr(vp, "type", None) == "Text":
+        # olevba reads ANY plain-text file as possible VBA source: a 14-byte "ATT08537.docx" holding only an email
+        # address came back as "1 VBA macro module" (real sample, 2026-11-18). Text files don't carry macros.
+        vp.close()
+        return None
     try:
         try:
             xlm = bool(vp.detect_xlm_macros())  # Excel 4.0 macro sheets: old, but still abused (no VBA project at all)

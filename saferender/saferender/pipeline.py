@@ -10,6 +10,8 @@ Runs INSIDE the offline container (no network, read-only root, no capabilities, 
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import hashlib
 import json
 import os
@@ -371,7 +373,8 @@ def process(case: Case, path: Path, name: str, parent: str | None, depth: int, w
     if expected is None and ext in TEXTY_EXT and kind in BINARY_KINDS:
         expected = {"text"}  # a calendar invite / text file whose bytes are really a PDF, archive, program...
     if expected and kind not in expected:
-        flag(f, "high", f"file is not what its name says: named {ext}, content is {KIND_LABEL.get(kind, kind)}")
+        label = "plain text" if kind == "other" and looks_like_text(path) else KIND_LABEL.get(kind, kind)
+        flag(f, "high", f"file is not what its name says: named {ext}, content is {label}")
         if kind == "pe":
             f["escalate"] = "Disguised executable: can't be previewed safely. Don't open it. Escalate manually per your process."
     is_zip = kind == "zip" and not F.is_ooxml_or_odf(path)
@@ -423,7 +426,7 @@ def process(case: Case, path: Path, name: str, parent: str | None, depth: int, w
         path = unlock_pdf(f, path, work, budget)
         render_pdf(case, f, path)
         pdf_depth(case, f, path, depth, work, budget)
-    elif kind in ("ole", "rtf", "zip") or ext in F.OFFICE_EXT:
+    elif kind in ("ole", "rtf", "zip") or (ext in F.OFFICE_EXT and not looks_like_text(path)):
         office(case, f, path, work, depth, budget)
     elif kind == "image":
         render_image(case, f, path)
@@ -717,6 +720,19 @@ def pdf_depth(case: Case, f: dict, path: Path, depth: int, work: Path, budget: d
 def text_depth(case: Case, f: dict, path: Path, depth: int, work: Path, budget: dict) -> None:
     """Scripts and HTML: decode layer by layer; links built at run time and smuggled files come out here."""
     raw = path.read_bytes()[: F.LIMITS["max_text_bytes"]].decode("utf-8", "replace")
+    whole = re.sub(r"\s+", "", raw)
+    if len(whole) >= 64 and re.fullmatch(r"[A-Za-z0-9+/]+={0,2}", whole):
+        # The whole file is base64 (real sample: a ".donconfig" attachment hiding filler text). Show what it says.
+        try:
+            dec = base64.b64decode(whole + "=" * (-len(whole) % 4))
+        except (binascii.Error, ValueError):
+            dec = b""
+        if dec and looks_like_bytes_text(dec):
+            text = dec.decode("utf-8", "replace")
+            f["text"] = ("[decoded from base64]\n" + text)[:200000]
+            flag(f, "medium", "the whole file is base64-encoded text, so filters and a quick look can't read it "
+                              "(decoded copy shown)")
+            scan_text(f, text, None, "decoded")
     hidden = add_decoded(f, raw, None, "script")
     if hidden:
         flag(f, "medium", f"{len(hidden)} link(s) only visible after decoding: "
@@ -726,6 +742,17 @@ def text_depth(case: Case, f: dict, path: Path, depth: int, work: Path, budget: 
         flag(f, "high", "builds file(s) from encoded data inside the page (HTML smuggling): "
              + ", ".join(f"{F.safe_name(n)} ({len(b):,} bytes)" for n, b in blobs[:5]))
         add_children(case, f, blobs, depth, work, budget, "decoded files")
+
+
+def looks_like_bytes_text(chunk: bytes) -> bool:
+    """UTF-8 text in any language (the decoded filler was Chinese), not just ASCII."""
+    try:
+        t = chunk[:8192].decode("utf-8")
+    except UnicodeDecodeError:
+        t = chunk[:8191].decode("utf-8", "ignore")
+        if len(t) < len(chunk[:8191]) * 0.3:
+            return False
+    return bool(t) and sum(c.isprintable() or c in "\t\r\n" for c in t) / len(t) > 0.9
 
 
 def looks_like_text(path: Path) -> bool:

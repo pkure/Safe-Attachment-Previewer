@@ -340,3 +340,15 @@ def test_renamed_ics_duplicate_and_invisible_subject(tmp_path):
     assert any("same file is attached 2 times" in x for x in t), t
     assert any("invisible character" in x and "subject" in x for x in t), t
     assert any("1 empty (0-byte) attachment" in x for x in t), t
+
+
+def test_text_disguised_as_docx_and_base64_text_file(tmp_path):
+    rep = run(tmp_path, "text-disguises.eml")
+    files = by_name(rep)
+    doc, b64 = files["ATT00001.docx"], files["note-1234.donconfig"]
+    assert any("named .docx, content is plain text" in x["text"] for x in doc["flags"])
+    assert not any("VBA" in x["text"] for x in doc["flags"]), "plain text is not a macro"
+    assert any(e["addr"] == "contact-desk@reply-scam.example" for e in doc["emails"])
+    assert b64["text"].startswith("[decoded from base64]")
+    assert any("base64-encoded text" in x["text"] for x in b64["flags"])
+    assert any(link["url"] == "https://b64-filler.example/note" for link in b64["links"])

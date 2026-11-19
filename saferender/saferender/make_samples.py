@@ -546,6 +546,21 @@ def tier2b_set(out: Path) -> None:
     m.add_attachment(b"", maintype="application", subtype="octet-stream", filename="User Agreement")
     (out / "renamed-ics.eml").write_bytes(bytes(m))
 
+    # Patterns from real 2026-11-18 phishing: a "Word document" that is only a reply-to address, and an attachment
+    # that is nothing but base64 text (filler that makes the email look personal; here with a link inside).
+    import base64 as _b64
+    m = EmailMessage()
+    m["From"] = "Order Desk <orders@reply-scam.example>"
+    m["To"] = "analyst@contoso.com"
+    m["Subject"] = "Your order (TEST SAMPLE)"
+    m.set_content("Questions? See the attached document. TEST SAMPLE ONLY.")
+    m.add_attachment(b"contact-desk@reply-scam.example", maintype="application", subtype="octet-stream",
+                     filename="ATT00001.docx")
+    filler = "TEST SAMPLE. Hey, how are you? Lovely weather today. Details: https://b64-filler.example/note\n" * 3
+    m.add_attachment(_b64.b64encode(filler.encode()), maintype="application", subtype="octet-stream",
+                     filename="note-1234.donconfig")
+    (out / "text-disguises.eml").write_bytes(bytes(m))
+
 
 def main(out: Path) -> None:
     out.mkdir(parents=True, exist_ok=True)
